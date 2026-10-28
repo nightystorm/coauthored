@@ -243,7 +243,7 @@ app.get('/ads.txt', (req, res) => {
   res.type('text').send(pub ? `google.com, ${pub}, DIRECT, f08c47fec0942fa0\n` : '');
 });
 app.get('/robots.txt', (req, res) => res.type('text').send(`User-agent: *\nAllow: /\nDisallow: /counting/\nDisallow: /api/\n`));
-app.get('/healthz', (req, res) => res.send('ok'));
+app.get('/healthz', (req, res) => res.type('text').send(process.env.DATABASE_URL ? 'ok postgres' : 'ok file'));
 
 app.use((err, req, res, next) => {
   console.error(err);
