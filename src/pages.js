@@ -1,7 +1,7 @@
 // HTML templates. Plain template strings, no build step.
 import { TOOLS, cardTools, headlineTool, splitText } from './tools.js';
 import { statColumns } from './card.js';
-import { BULK_LINES } from './counter.js';
+import { BULK_LINES } from './aggregate.js';
 
 const esc = (s = '') =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -9,6 +9,7 @@ const fmt = (n) => Number(n).toLocaleString('en-US');
 
 const ADSENSE = process.env.ADSENSE_CLIENT;
 const DEV = process.env.NODE_ENV !== 'production';
+const BOOT = Date.now(); // cache-busts the page scripts on every deploy
 const REPO_URL = process.env.REPO_URL;
 
 // One ad unit. Shows a dashed placeholder locally and nothing in production
@@ -87,6 +88,22 @@ table.tools th:not(:first-child), table.tools td:not(:first-child) { text-align:
 table.repos td:first-child { overflow-wrap: anywhere; font-family: var(--mono); font-size: 14px; }
 table.repos a { color: var(--text); text-decoration-color: var(--line); text-underline-offset: 3px; }
 table.tools td i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 10px; vertical-align: 0; }
+.owner { border: 1px solid var(--add); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; gap: 14px; background: var(--panel); }
+.owner-head { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; justify-content: space-between; }
+.sources { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.sources li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); min-width: 0; }
+.sources li > span { min-width: 0; overflow-wrap: anywhere; }
+.sources form { margin: 0; }
+button.link { background: none; border: 0; padding: 4px; color: var(--del); font: 400 14px var(--mono); cursor: pointer; }
+button.link:focus-visible { outline: 2px solid var(--add); outline-offset: 2px; }
+.paste { display: flex; flex-direction: column; gap: 14px; }
+.paste h2 { margin-top: 8px; }
+pre.cmd { margin: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font: 400 13px/1.5 var(--mono); white-space: pre-wrap; word-break: break-all; }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
+.paste input, .paste textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--text); font: 400 14px var(--mono); padding: 12px 14px; }
+.paste input:focus-visible, .paste textarea:focus-visible { outline: 2px solid var(--add); outline-offset: 1px; }
+.paste textarea { min-height: 180px; resize: vertical; }
+.log-summary { font: 400 15px var(--mono); color: var(--add); min-height: 1.5em; }
 dl.stats { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px 24px; }
 dl.stats div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 dl.stats dt { font-size: 30px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -153,6 +170,7 @@ ${body}
 
 const ERRORS = {
   signin: 'GitHub sign-in did not finish. Try again, and approve access on the GitHub page.',
+  owner: 'To add more to your card, first count your GitHub on this device. That proves the card is yours.',
 };
 
 export function landingPage({ totals, year, error, detail }) {
@@ -214,7 +232,32 @@ export function countingPage({ id, login }) {
 </script>`;
 }
 
-export function sharePage({ card, pageUrl, image, justCounted, removed }) {
+// Where the card's numbers come from, e.g. "GitHub (private repos included) + 2 pasted repos".
+export function sourcesText(card) {
+  const list = card.sources || [{ kind: 'github' }];
+  const parts = [];
+  if (list.some((s) => s.kind === 'github')) parts.push(card.includesPrivate ? 'GitHub, private repos included' : 'GitHub, public repos');
+  if (list.some((s) => s.kind === 'gitlab')) parts.push('GitLab');
+  const pasted = list.filter((s) => s.kind === 'paste').length;
+  if (pasted) parts.push(`${pasted} pasted ${pasted === 1 ? 'repo' : 'repos'}`);
+  return parts.join(' + ');
+}
+
+function ownerPanel(card) {
+  const extra = (card.sources || []).filter((s) => s.kind !== 'github');
+  return `<section class="owner">
+  <div class="owner-head"><h2>Add more to your card</h2><span class="fine">Only you see this.</span></div>
+  <p class="fine">Count work that isn't on GitHub: company GitLab, Bitbucket, or any repo on your computer. Commits found in two places are counted once.</p>
+  <div class="actions">
+    <a class="btn primary" href="/add/paste">+ Add a repo from git log</a>
+    <a class="btn" href="${card.includesPrivate ? '/private' : '/login'}">Count GitHub again</a>
+  </div>
+  ${extra.length ? `<ul class="sources">${extra.map((s) => `<li><span><b>${esc(s.label)}</b> <span class="fine">${s.kind === 'paste' ? 'pasted' : esc(s.kind)}, ${fmt(s.commits)} AI ${s.commits === 1 ? 'commit' : 'commits'}</span></span>
+    <form method="post" action="/api/sources/remove"><input type="hidden" name="key" value="${esc(s.key)}"><button class="link" type="submit">Remove</button></form></li>`).join('')}</ul>` : ''}
+</section>`;
+}
+
+export function sharePage({ card, pageUrl, image, justCounted, removed, added, owner }) {
   const tools = cardTools(card);
   const split = splitText(card);
   const aiShare = card.totalCommits ? Math.max(1, Math.round((card.commits / card.totalCommits) * 100)) : null;
@@ -228,11 +271,13 @@ export function sharePage({ card, pageUrl, image, justCounted, removed }) {
   return `
 <section class="hero">
   ${justCounted ? `<p class="mono" style="color:var(--add)">Done. This is your card.${removed ? ' Code Wrapped has been removed from your GitHub account.' : ''}</p>` : ''}
+  ${added ? '<p class="mono" style="color:var(--add)">Repo added. Your card is updated.</p>' : ''}
   <h1>${empty ? `No AI co-authored commits found for @${esc(card.login)} yet` : `@${esc(card.login)} shipped <em>+${fmt(card.additions)}</em> lines with ${esc(headlineTool(card))}`}</h1>
   <p class="lede">${empty
     ? `We looked for commits in ${card.year} that you authored with an AI tool in a <code>Co-authored-by</code> line.${card.includesPrivate ? '' : ' Only public repos were counted.'}`
-    : `${fmt(card.commits)} commits across ${fmt(card.repos)} ${card.repos === 1 ? 'repo' : 'repos'} in ${card.year}, ${fmt(card.deletions)} lines deleted along the way.${card.includesPrivate ? '' : ' Public repos only.'}`}</p>
+    : `${fmt(card.commits)} commits across ${fmt(card.repos)} ${card.repos === 1 ? 'repo' : 'repos'} in ${card.year}, ${fmt(card.deletions)} lines deleted along the way. Counted from ${esc(sourcesText(card))}.`}</p>
 </section>
+${owner ? ownerPanel(card) : ''}
 <figure>
   <img class="card-img" src="${esc(image)}" alt="Card: +${fmt(card.additions)} lines of code shipped with ${esc(headlineTool(card))} in ${card.year} by @${esc(card.login)}" width="1200" height="630">
 </figure>
@@ -251,6 +296,8 @@ ${empty || !card.repoList?.length ? '' : `<table class="tools repos">
   <tbody>${card.repoList.map((r) => {
     const label = r.group === 'private'
       ? `${fmt(r.repos)} private ${r.repos === 1 ? 'repo' : 'repos'}`
+      : r.group === 'self'
+        ? `${fmt(r.repos)} pasted ${r.repos === 1 ? 'repo' : 'repos'} (self-counted)`
       : r.group === 'public'
         ? `${fmt(r.repos)} more public ${r.repos === 1 ? 'repo' : 'repos'}`
         : `<a href="https://github.com/${esc(r.name)}" target="_blank" rel="noopener">${esc(r.name)}</a>`;
@@ -258,7 +305,7 @@ ${empty || !card.repoList?.length ? '' : `<table class="tools repos">
     return `<tr><td>${label}</td><td>${fmt(r.commits)}</td><td>+${fmt(r.additions)}</td><td>${share}%</td></tr>`;
   }).join('')}</tbody>
 </table>
-${card.repoList.some((r) => r.group === 'private') ? '<p class="fine">Private repo names are never stored or shown.</p>' : ''}`}
+${card.repoList.some((r) => r.group === 'private' || r.group === 'self') ? '<p class="fine">Private and pasted repo names are never shown. Pasted repos are counted by their owner and are left out of the ranking.</p>' : ''}`}
 <div class="share">
   <a class="btn primary" href="${esc(x)}" target="_blank" rel="noopener">Post on X</a>
   <a class="btn" href="${esc(li)}" target="_blank" rel="noopener">Share on LinkedIn</a>
@@ -336,4 +383,65 @@ export function privatePage({ repoUrl }) {
   <a class="btn" href="/login">Public repos only</a>
   ${repoUrl ? `<a class="btn" href="${esc(repoUrl)}" target="_blank" rel="noopener">Read the code</a>` : ''}
 </div>`;
+}
+
+export function pastePage({ card, year }) {
+  return `
+<section class="hero">
+  <h1>Add a repo from git log</h1>
+  <p class="lede">For work GitHub can't see: company GitLab, Bitbucket, or any repo on your computer. It gets added to <a href="/u/${esc(card.login)}">your card</a>.</p>
+</section>
+<section class="paste">
+  <h2>1. Run this inside the repo</h2>
+  <p class="fine">In Terminal on Mac or Linux, Git Bash or PowerShell on Windows. It's plain git and only reads your history.</p>
+  <pre class="cmd" id="cmd"></pre>
+  <div class="actions"><button class="btn" type="button" id="copycmd">Copy command</button></div>
+
+  <h2>2. Paste the output here</h2>
+  <p class="fine">Your paste is read in this browser and never sent. Only the totals per commit leave your computer: commit id, date, lines added and deleted, and which AI tool. No code, file names or messages.</p>
+  <label class="field"><span>Repo name, just for you to recognise it (never shown on your card)</span>
+    <input id="reponame" maxlength="60" placeholder="e.g. work-api" autocomplete="off"></label>
+  <textarea id="log" rows="10" spellcheck="false" placeholder="@@@3f9c2...|${year}-03-14T10:22:01+01:00|Claude &lt;noreply@anthropic.com&gt;"></textarea>
+  <p class="log-summary" id="summary" aria-live="polite"></p>
+  <div class="actions">
+    <button class="btn primary" type="button" id="add" disabled>Add to my card</button>
+    <a class="btn" href="/u/${esc(card.login)}">Cancel</a>
+  </div>
+  <p class="fine">Adding the same repo name again replaces it. Commits already counted from GitHub are not counted twice.</p>
+</section>
+<script type="module">
+import { parsePastedLog, pasteCommand } from '/js/paste.js?v=${encodeURIComponent(process.env.RAILWAY_GIT_COMMIT_SHA || String(BOOT))}';
+const year = ${Number(year)};
+const $ = (id) => document.getElementById(id);
+$('cmd').textContent = pasteCommand(year);
+$('copycmd').addEventListener('click', () => {
+  navigator.clipboard.writeText($('cmd').textContent).then(() => { $('copycmd').textContent = 'Copied'; }, () => {});
+});
+let parsed = null;
+function update() {
+  parsed = parsePastedLog($('log').value, year);
+  const ai = parsed.commits;
+  const lines = ai.reduce((s, c) => s + c.additions, 0);
+  if (!$('log').value.trim()) { $('summary').textContent = ''; }
+  else if (!parsed.totalCommits) { $('summary').textContent = 'No ${year} commits found yet. Paste the whole output of the command.'; }
+  else { $('summary').textContent = 'Found ' + parsed.totalCommits.toLocaleString('en-US') + ' commits in ' + year + ', ' + ai.length.toLocaleString('en-US') + ' with an AI tool, +' + lines.toLocaleString('en-US') + ' lines.'; }
+  $('add').disabled = !(parsed.totalCommits && $('reponame').value.trim());
+}
+$('log').addEventListener('input', update);
+$('reponame').addEventListener('input', update);
+$('add').addEventListener('click', async () => {
+  $('add').disabled = true; $('add').textContent = 'Adding…';
+  try {
+    const r = await fetch('/api/sources/paste', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: $('reponame').value.trim(), totalCommits: parsed.totalCommits, commits: parsed.commits }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Something went wrong.');
+    location.href = j.url;
+  } catch (e) {
+    $('summary').textContent = e.message; $('add').disabled = false; $('add').textContent = 'Add to my card';
+  }
+});
+</script>`;
 }

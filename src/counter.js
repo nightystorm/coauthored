@@ -3,7 +3,8 @@
 //    per query, so big date ranges are split until each piece fits). Each
 //    co-author line is matched against the tool list in tools.js.
 // 2. GraphQL fetches additions/deletions for 100 commits per request.
-import { toolsInMessage, toolById, unknownAiTags } from './tools.js';
+import crypto from 'node:crypto';
+import { toolsInMessage, unknownAiTags } from './tools.js';
 
 const API = 'https://api.github.com';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -46,7 +47,6 @@ async function gh(token, url, opts = {}, attempt = 0) {
 }
 
 const day = 86400000;
-export const BULK_LINES = 20000;
 const iso = (t) => new Date(t).toISOString().slice(0, 10);
 
 async function searchRange(token, login, from, to, found, onProgress) {
@@ -76,7 +76,9 @@ async function searchRange(token, login, from, to, found, onProgress) {
 
 const STATS_QUERY = `query($ids:[ID!]!){ nodes(ids:$ids){ ... on Commit { oid additions deletions } } }`;
 
-export async function countYear({ token, login, year, onProgress }) {
+// Finds this year's AI co-authored commits on GitHub and returns them as a
+// source for aggregate.js, plus the user's total commit count.
+export async function countGitHub({ token, login, year, onProgress }) {
   const from = Date.UTC(year, 0, 1);
   const to = Math.min(Date.UTC(year, 11, 31), Date.now());
   const found = new Map();
@@ -99,88 +101,32 @@ export async function countYear({ token, login, year, onProgress }) {
   const allQ = `author:${login} merge:false author-date:${iso(from)}..${iso(to)}`;
   const totalCommits = (await gh(token, `/search/commits?q=${encodeURIComponent(allQ)}&per_page=1`)).total_count;
 
-  const months = Array(12).fill(0);
-  const repos = new Map();
-  const tools = new Map();
-  const days = new Map();
-  let additions = 0;
-  let deletions = 0;
-  let bulkCommits = 0;
-  for (const it of items) {
-    let s = stats.get(it.sha) || { additions: 0, deletions: 0 };
-    // Commits this big are almost always lock files, generated or vendored
-    // code. They still count as commits but their lines are left out.
-    if (s.additions > BULK_LINES) {
-      bulkCommits += 1;
-      s = { additions: 0, deletions: 0 };
-    }
-    additions += s.additions;
-    deletions += s.deletions;
-    // The author date keeps the committer's own time zone, so slice the day from it.
-    const date = String(it.commit.author.date).slice(0, 10);
-    months[Number(date.slice(5, 7)) - 1] += s.additions;
-    days.set(date, (days.get(date) || 0) + s.additions);
-    // A commit credited to two tools splits its lines between them.
-    for (const id of it.tools) {
-      const t = tools.get(id) || { id, name: toolById[id].name, commits: 0, additions: 0 };
-      t.commits += 1;
-      t.additions += Math.round(s.additions / it.tools.length);
-      tools.set(id, t);
-    }
+  const commits = items.map((it) => {
+    const s = stats.get(it.sha) || { additions: 0, deletions: 0 };
     const name = it.repository.full_name;
-    const r = repos.get(name) || { name, private: it.repository.private, commits: 0, additions: 0 };
-    r.commits += 1;
-    r.additions += s.additions;
-    repos.set(name, r);
-  }
-
-  const sortedDays = [...days.keys()].sort();
-  let longestStreak = 0;
-  let run = 0;
-  let prev = null;
-  for (const d of sortedDays) {
-    const t = Date.parse(`${d}T00:00:00Z`);
-    run = prev !== null && t - prev === day ? run + 1 : 1;
-    longestStreak = Math.max(longestStreak, run);
-    prev = t;
-  }
-  const best = [...days].sort((a, b) => b[1] - a[1])[0];
-  // Private repo names never leave the server: only public ones can be shown.
-  const topPublicRepo = [...repos.values()]
-    .filter((r) => !r.private)
-    .sort((a, b) => b.additions - a.additions)[0]?.name || null;
-
-  // Per-repo breakdown. Public repos by name (top 10); private repos are
-  // only ever stored as one combined row, never by name.
-  const pub = [...repos.values()].filter((r) => !r.private).sort((a, b) => b.additions - a.additions);
-  const priv = [...repos.values()].filter((r) => r.private);
-  const repoList = pub.slice(0, 10).map(({ name, commits, additions }) => ({ name, commits, additions }));
-  const otherPublic = pub.slice(10);
-  if (otherPublic.length) {
-    repoList.push({ group: 'public', repos: otherPublic.length, commits: otherPublic.reduce((s, r) => s + r.commits, 0), additions: otherPublic.reduce((s, r) => s + r.additions, 0) });
-  }
-  if (priv.length) {
-    repoList.push({ group: 'private', repos: priv.length, commits: priv.reduce((s, r) => s + r.commits, 0), additions: priv.reduce((s, r) => s + r.additions, 0) });
-  }
+    const priv = Boolean(it.repository.private);
+    return {
+      sha: it.sha,
+      // The author date keeps the committer's own time zone, so slice the day from it.
+      date: String(it.commit.author.date).slice(0, 10),
+      additions: s.additions,
+      deletions: s.deletions,
+      tools: it.tools,
+      // Private repo names are never stored, only a one-way fingerprint.
+      repoKey: priv ? `gh-${fingerprint(name)}` : `gh:${name}`,
+      repo: priv ? null : name,
+      private: priv,
+    };
+  });
 
   return {
-    year,
-    commits: items.length,
-    additions,
-    deletions,
-    repos: repos.size,
-    months,
-    tools: [...tools.values()].sort((a, b) => b.additions - a.additions || b.commits - a.commits),
-    totalCommits: Math.max(totalCommits, items.length),
-    activeDays: days.size,
-    longestStreak,
-    busiestDay: best && best[1] > 0 ? { date: best[0], additions: best[1] } : null,
-    bulkCommits,
-    topPublicRepo,
-    repoList,
-    // Not saved on the card: tags that look like an AI tool we don't know yet.
+    source: { key: 'github', kind: 'github', label: 'GitHub', verified: true, totalCommits: Math.max(totalCommits, commits.length), commits },
     unknownTags: [...found.unknown],
   };
+}
+
+export function fingerprint(text) {
+  return crypto.createHash('sha256').update(String(text).toLowerCase()).digest('hex').slice(0, 12);
 }
 
 export async function getUser(token) {

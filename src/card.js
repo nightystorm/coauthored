@@ -170,7 +170,7 @@ export async function renderCard(card, siteHost) {
             ),
           ),
         ),
-        h('div', { fontFamily: 'Mono', fontSize: 18, color: C.muted }, siteHost),
+        h('div', { fontFamily: 'Mono', fontSize: 18, color: C.muted }, `${card.selfCounted ? 'incl. self-counted repos · ' : ''}${siteHost}`),
       ),
     ),
   );

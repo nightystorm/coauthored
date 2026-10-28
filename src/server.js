@@ -1,13 +1,17 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import express from 'express';
-import { countYear, getUser } from './counter.js';
+import { countGitHub, getUser } from './counter.js';
+import { aggregate } from './aggregate.js';
+import { cleanRows } from './paste.js';
+import { TOOLS } from './tools.js';
 import { renderCard } from './card.js';
 import { store, topPercent } from './store.js';
 import { rateLimit } from './ratelimit.js';
 import { headlineTool, splitText } from './tools.js';
-import { layout, landingPage, countingPage, sharePage, missingPage, privacyPage, privatePage } from './pages.js';
+import { layout, landingPage, countingPage, sharePage, missingPage, privacyPage, privatePage, pastePage } from './pages.js';
 
 const require = createRequire(import.meta.url);
 const PORT = Number(process.env.PORT || 3000);
@@ -43,6 +47,12 @@ app.get('/', async (req, res) => {
   res.send(layout({ title: 'Code Wrapped', baseUrl: BASE_URL, body: landingPage({ totals, year: thisYear(), error: req.query.error, detail: req.query.detail }) }));
 });
 
+// The two files the "Add a repo" page runs in the browser to read a git log.
+const srcDir = path.dirname(fileURLToPath(import.meta.url));
+for (const file of ['tools.js', 'paste.js']) {
+  app.get(`/js/${file}`, (req, res) => res.type('application/javascript').set('Cache-Control', 'no-cache').sendFile(path.join(srcDir, file)));
+}
+
 app.get('/privacy', (req, res) => {
   res.send(layout({ title: 'Privacy · Code Wrapped', baseUrl: BASE_URL, body: privacyPage(process.env.CONTACT_EMAIL) }));
 });
@@ -67,7 +77,13 @@ app.get('/u/:login', async (req, res) => {
       image,
       url: pageUrl,
       baseUrl: BASE_URL,
-      body: sharePage({ card, pageUrl, image, justCounted: req.query.new === '1', removed: req.query.removed === '1' }),
+      body: sharePage({
+        card, pageUrl, image,
+        justCounted: req.query.new === '1',
+        removed: req.query.removed === '1',
+        added: req.query.added === '1',
+        owner: (await ownedCard(req, year))?.login === card.login,
+      }),
     }),
   );
 });
@@ -233,10 +249,13 @@ app.get('/auth/callback', async (req, res) => {
     }
 
     const id = crypto.randomBytes(12).toString('hex');
-    const job = { status: 'running', login: user.login, progress: { phase: 'search', found: 0 }, startedAt: Date.now() };
+    // Signing in proves this is the card's owner, so this browser gets an
+    // edit key to add more sources to the card later.
+    const editKey = crypto.randomBytes(24).toString('base64url');
+    const job = { status: 'running', login: user.login, progress: { phase: 'search', found: 0 }, startedAt: Date.now(), editKeyHash: hashKey(editKey) };
     jobs.set(id, job);
     runJob(job, token, user, installationId);
-    res.setHeader('Set-Cookie', 'oauth_state=; Path=/; Max-Age=0');
+    res.setHeader('Set-Cookie', ['oauth_state=; Path=/; Max-Age=0', editCookie(user.login, editKey)]);
     res.redirect(`/counting/${id}`);
   } catch (e) {
     fail('exception', e.message);
@@ -246,21 +265,16 @@ app.get('/auth/callback', async (req, res) => {
 async function runJob(job, token, user, installationId) {
   try {
     const year = thisYear();
-    const result = await countYear({ token, login: user.login, year, onProgress: (p) => (job.progress = p) });
-    const { unknownTags = [], ...stats } = result;
+    const { source, unknownTags } = await countGitHub({ token, login: user.login, year, onProgress: (p) => (job.progress = p) });
     for (const tag of unknownTags) unknownTagCounts.set(tag, (unknownTagCounts.get(tag) || 0) + 1);
-    const card = {
-      login: user.login,
-      name: user.name,
-      avatarUrl: user.avatar_url,
-      includesPrivate: Boolean(installationId),
-      updatedAt: new Date().toISOString(),
-      ...stats,
-    };
-    await store.put(card);
-    // Draw the share image now, so the first link preview is instant.
+    source.includesPrivate = Boolean(installationId);
+    source.updatedAt = new Date().toISOString();
+    await store.putSource(user.login, year, source);
     job.progress = { phase: 'card' };
-    await cardPng(card).catch((e) => console.error('card render failed', card.login, e.message));
+    await rebuildCard(user.login, year, {
+      profile: { name: user.name, avatarUrl: user.avatar_url },
+      addEditKeyHash: job.editKeyHash,
+    });
     job.ok = true;
   } catch (e) {
     console.error('count failed', user.login, e);
@@ -274,6 +288,92 @@ async function runJob(job, token, user, installationId) {
     setTimeout(() => jobs.delete([...jobs].find(([, j]) => j === job)?.[0]), 10 * 60 * 1000);
   }
 }
+
+// ---------- cards built from sources ----------
+
+// Recomputes a card from all its sources, saves it and draws its image.
+async function rebuildCard(cardId, year, { profile, addEditKeyHash } = {}) {
+  const existing = (await store.get(cardId, year)) || {};
+  const sources = await store.getSources(cardId, year);
+  const stats = aggregate(sources);
+  let editKeys = existing.editKeys || [];
+  if (addEditKeyHash) editKeys = [addEditKeyHash, ...editKeys.filter((k) => k !== addEditKeyHash)].slice(0, 5);
+  const card = {
+    login: existing.login || cardId,
+    name: profile?.name ?? existing.name ?? null,
+    avatarUrl: profile?.avatarUrl ?? existing.avatarUrl ?? null,
+    year,
+    includesPrivate: Boolean(sources.find((s) => s.kind === 'github')?.includesPrivate),
+    selfCounted: sources.some((s) => !s.verified),
+    editKeys,
+    updatedAt: new Date().toISOString(),
+    ...stats,
+  };
+  await store.put(card);
+  // Draw the share image now, so the first link preview is instant.
+  await cardPng(card).catch((e) => console.error('card render failed', card.login, e.message));
+  return card;
+}
+
+const hashKey = (key) => crypto.createHash('sha256').update(key).digest('hex');
+function editCookie(cardId, key) {
+  return `cw_edit=${encodeURIComponent(cardId)}.${key}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000${secure}`;
+}
+// The card this browser may edit, if its edit key matches.
+async function ownedCard(req, year = thisYear()) {
+  const raw = cookie(req, 'cw_edit');
+  if (!raw) return null;
+  const dot = raw.lastIndexOf('.');
+  const cardId = decodeURIComponent(raw.slice(0, dot));
+  const key = raw.slice(dot + 1);
+  const card = await store.get(cardId, year);
+  return card && (card.editKeys || []).includes(hashKey(key)) ? card : null;
+}
+
+// Paste a git log: the page parses it in the browser and sends only the
+// AI commit rows (sha, date, lines, tools) plus a total commit count.
+app.get('/add/paste', async (req, res) => {
+  const card = await ownedCard(req);
+  if (!card) return res.redirect('/?error=owner');
+  res.send(layout({ title: 'Add a repo · Code Wrapped', baseUrl: BASE_URL, body: pastePage({ card, year: thisYear() }) }));
+});
+
+app.post('/api/sources/paste', express.json({ limit: '3mb' }), async (req, res) => {
+  try {
+    const card = await ownedCard(req);
+    if (!card) return res.status(403).json({ error: 'This browser can no longer edit this card. Count your GitHub again to get access back.' });
+    const year = thisYear();
+    const name = String(req.body?.name || '').trim().slice(0, 60);
+    if (!name) return res.status(400).json({ error: 'Give the repo a name.' });
+    const commits = cleanRows(req.body?.commits, year, new Set(TOOLS.map((t) => t.id)));
+    const totalCommits = Math.max(commits.length, Math.min(Number(req.body?.totalCommits) || 0, 100000));
+    if (!totalCommits) return res.status(400).json({ error: `No commits from ${year} found in what you pasted.` });
+    const key = `paste:${name.toLowerCase()}`;
+    await store.putSource(card.login, year, {
+      key, kind: 'paste', label: name, verified: false, totalCommits,
+      commits: commits.map((c) => ({ ...c, repoKey: key, repo: null, private: true })),
+      updatedAt: new Date().toISOString(),
+    });
+    const updated = await rebuildCard(card.login, year);
+    res.json({ ok: true, url: `/u/${encodeURIComponent(updated.login)}?added=1` });
+  } catch (e) {
+    console.error('paste failed', e);
+    noteFailure('paste', e.message);
+    res.status(500).json({ error: 'Something went wrong while adding this repo.' });
+  }
+});
+
+app.post('/api/sources/remove', express.urlencoded({ extended: false }), async (req, res) => {
+  const card = await ownedCard(req);
+  if (!card) return res.redirect('/?error=owner');
+  const key = String(req.body?.key || '');
+  // GitHub is the card's identity, so only extra sources can be removed.
+  if (key && key !== 'github') {
+    await store.deleteSource(card.login, thisYear(), key);
+    await rebuildCard(card.login, thisYear());
+  }
+  res.redirect(`/u/${encodeURIComponent(card.login)}`);
+});
 
 // Signs a short-lived token that proves requests come from the app itself.
 function appJwt() {
