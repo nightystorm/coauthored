@@ -284,6 +284,24 @@ app.get('/ads.txt', (req, res) => {
 app.get('/robots.txt', (req, res) => res.type('text').send(`User-agent: *\nAllow: /\nDisallow: /counting/\nDisallow: /api/\n`));
 app.get('/healthz', (req, res) => res.type('text').send(process.env.DATABASE_URL ? 'ok postgres' : 'ok file'));
 
+// Says whether each GitHub setting looks right, without revealing any value.
+app.get('/healthz/github', (req, res) => {
+  let key = 'missing';
+  if (PRIVATE_KEY) {
+    try { crypto.createPrivateKey(PRIVATE_KEY); key = 'valid'; } catch { key = 'set but not a valid key'; }
+  }
+  const secretNames = Object.keys(process.env).filter((k) => /secret/i.test(k) && k !== 'GITHUB_CLIENT_SECRET');
+  res.type('text').send([
+    `client id: ${CLIENT_ID ? `set, starts ${CLIENT_ID.slice(0, 6)}` : 'missing'}`,
+    `client secret: ${CLIENT_SECRET ? `set, ${CLIENT_SECRET.length} characters, ${/^[0-9a-f]+$/.test(CLIENT_SECRET) ? 'looks right' : 'contains unexpected characters'}` : 'missing'}`,
+    `other variables with "secret" in the name: ${secretNames.join(', ') || 'none'}`,
+    `app id: ${APP_ID ? (/^\d+$/.test(APP_ID) ? 'set, a number' : 'set but not a number') : 'missing'}`,
+    `app slug: ${APP_SLUG || 'missing'}`,
+    `private key: ${key}`,
+    `base url: ${BASE_URL}`,
+  ].join('\n'));
+});
+
 app.use((err, req, res, next) => {
   console.error(err);
   res.status(500).send('Something went wrong.');
