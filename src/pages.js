@@ -84,6 +84,8 @@ table.tools { width: 100%; border-collapse: collapse; font-variant-numeric: tabu
 table.tools th { text-align: left; font: 400 13px var(--mono); color: var(--muted); padding: 0 12px 8px 0; border-bottom: 1px solid var(--line); }
 table.tools td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); }
 table.tools th:not(:first-child), table.tools td:not(:first-child) { text-align: right; font-family: var(--mono); font-size: 15px; }
+table.repos td:first-child { overflow-wrap: anywhere; font-family: var(--mono); font-size: 14px; }
+table.repos a { color: var(--text); text-decoration-color: var(--line); text-underline-offset: 3px; }
 table.tools td i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 10px; vertical-align: 0; }
 dl.stats { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px 24px; }
 dl.stats div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -180,6 +182,7 @@ ${ad('ADSENSE_SLOT_HOME')}
   <h2>Tools we recognise</h2>
   <ul>${TOOLS.map((t) => `<li><i style="background:${esc(t.color)}"></i>${esc(t.name)}</li>`).join('')}</ul>
   <p class="fine">We count a tool when its name appears in a commit's <code>Co-authored-by</code> line. Agents like Claude Code, Cursor's agent and Aider add that line for you. Inline autocomplete leaves no trace in the commit, so it can't be counted.</p>
+  <p class="fine"><b>Tip:</b> keep your AI tool's co-author tag switched on, and commit from your editor or terminal rather than editing on github.com. Then Code Wrapped can count everything you ship with AI.</p>
 </section>`;
 }
 
@@ -237,11 +240,25 @@ ${empty || !(stats.length || card.rank) ? '' : `<dl class="stats">
   ${card.rank ? `<div class="rank"><dt>Top ${card.rank}%</dt><dd>more lines than ${100 - card.rank}% of developers on Code Wrapped</dd></div>` : ''}
   ${stats.map(([v, l]) => `<div><dt>${esc(v)}</dt><dd>${esc(l)}</dd></div>`).join('')}
 </dl>`}
+${!empty && card.totalCommits ? `<p class="fine">AI share is counted from <code>Co-authored-by</code> tags. Commits without one count as non-AI, even if AI wrote them: edits made on github.com, commits from sessions with the AI tag turned off, or messages typed by hand.</p>` : ''}
 ${card.bulkCommits ? `<p class="fine">${fmt(card.bulkCommits)} very large ${card.bulkCommits === 1 ? 'commit' : 'commits'} (over ${fmt(BULK_LINES)} lines added, usually lock files or generated code) ${card.bulkCommits === 1 ? 'is' : 'are'} counted as ${card.bulkCommits === 1 ? 'a commit' : 'commits'} but ${card.bulkCommits === 1 ? 'its' : 'their'} lines are left out.</p>` : ''}
 ${empty ? '' : `<table class="tools">
   <thead><tr><th>Tool</th><th>Commits</th><th>Lines added</th><th>Share</th></tr></thead>
   <tbody>${tools.map((t) => `<tr><td><i style="background:${esc(t.color)}"></i>${esc(t.name)}</td><td>${fmt(t.commits)}</td><td>+${fmt(t.additions)}</td><td>${Math.max(1, Math.round(t.share * 100))}%</td></tr>`).join('')}</tbody>
 </table>`}
+${empty || !card.repoList?.length ? '' : `<table class="tools repos">
+  <thead><tr><th>Repo</th><th>Commits</th><th>Lines added</th><th>Share</th></tr></thead>
+  <tbody>${card.repoList.map((r) => {
+    const label = r.group === 'private'
+      ? `${fmt(r.repos)} private ${r.repos === 1 ? 'repo' : 'repos'}`
+      : r.group === 'public'
+        ? `${fmt(r.repos)} more public ${r.repos === 1 ? 'repo' : 'repos'}`
+        : `<a href="https://github.com/${esc(r.name)}" target="_blank" rel="noopener">${esc(r.name)}</a>`;
+    const share = card.additions ? Math.max(r.additions ? 1 : 0, Math.round((r.additions / card.additions) * 100)) : 0;
+    return `<tr><td>${label}</td><td>${fmt(r.commits)}</td><td>+${fmt(r.additions)}</td><td>${share}%</td></tr>`;
+  }).join('')}</tbody>
+</table>
+${card.repoList.some((r) => r.group === 'private') ? '<p class="fine">Private repo names are never stored or shown.</p>' : ''}`}
 <div class="share">
   <a class="btn primary" href="${esc(x)}" target="_blank" rel="noopener">Post on X</a>
   <a class="btn" href="${esc(li)}" target="_blank" rel="noopener">Share on LinkedIn</a>

@@ -3,7 +3,7 @@
 //    per query, so big date ranges are split until each piece fits). Each
 //    co-author line is matched against the tool list in tools.js.
 // 2. GraphQL fetches additions/deletions for 100 commits per request.
-import { toolsInMessage, toolById } from './tools.js';
+import { toolsInMessage, toolById, unknownAiTags } from './tools.js';
 
 const API = 'https://api.github.com';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -63,6 +63,7 @@ async function searchRange(token, login, from, to, found, onProgress) {
     for (const it of items) {
       const tools = toolsInMessage(it.commit.message);
       if (tools.length) found.set(it.sha, { ...it, tools });
+      for (const tag of unknownAiTags(it.commit.message)) found.unknown.add(tag);
     }
     onProgress?.({ phase: 'search', found: found.size });
   };
@@ -79,6 +80,7 @@ export async function countYear({ token, login, year, onProgress }) {
   const from = Date.UTC(year, 0, 1);
   const to = Math.min(Date.UTC(year, 11, 31), Date.now());
   const found = new Map();
+  found.unknown = new Set();
   await searchRange(token, login, from, to, found, onProgress);
 
   const items = [...found.values()];
@@ -126,7 +128,8 @@ export async function countYear({ token, login, year, onProgress }) {
       tools.set(id, t);
     }
     const name = it.repository.full_name;
-    const r = repos.get(name) || { name, private: it.repository.private, additions: 0 };
+    const r = repos.get(name) || { name, private: it.repository.private, commits: 0, additions: 0 };
+    r.commits += 1;
     r.additions += s.additions;
     repos.set(name, r);
   }
@@ -147,6 +150,19 @@ export async function countYear({ token, login, year, onProgress }) {
     .filter((r) => !r.private)
     .sort((a, b) => b.additions - a.additions)[0]?.name || null;
 
+  // Per-repo breakdown. Public repos by name (top 10); private repos are
+  // only ever stored as one combined row, never by name.
+  const pub = [...repos.values()].filter((r) => !r.private).sort((a, b) => b.additions - a.additions);
+  const priv = [...repos.values()].filter((r) => r.private);
+  const repoList = pub.slice(0, 10).map(({ name, commits, additions }) => ({ name, commits, additions }));
+  const otherPublic = pub.slice(10);
+  if (otherPublic.length) {
+    repoList.push({ group: 'public', repos: otherPublic.length, commits: otherPublic.reduce((s, r) => s + r.commits, 0), additions: otherPublic.reduce((s, r) => s + r.additions, 0) });
+  }
+  if (priv.length) {
+    repoList.push({ group: 'private', repos: priv.length, commits: priv.reduce((s, r) => s + r.commits, 0), additions: priv.reduce((s, r) => s + r.additions, 0) });
+  }
+
   return {
     year,
     commits: items.length,
@@ -161,6 +177,9 @@ export async function countYear({ token, login, year, onProgress }) {
     busiestDay: best && best[1] > 0 ? { date: best[0], additions: best[1] } : null,
     bulkCommits,
     topPublicRepo,
+    repoList,
+    // Not saved on the card: tags that look like an AI tool we don't know yet.
+    unknownTags: [...found.unknown],
   };
 }
 

@@ -185,6 +185,10 @@ async function findInstallation(token, login) {
 
 const jobs = new Map();
 
+// AI-looking co-author tags we don't recognise yet, with how many people's
+// counts included them. Shown on /healthz/github to grow the tool list.
+const unknownTagCounts = new Map();
+
 // Last few failures, shown on /healthz/github. No usernames or tokens: only
 // the kind of failure, GitHub's message and which flow it was.
 const failures = [];
@@ -243,13 +247,15 @@ async function runJob(job, token, user, installationId) {
   try {
     const year = thisYear();
     const result = await countYear({ token, login: user.login, year, onProgress: (p) => (job.progress = p) });
+    const { unknownTags = [], ...stats } = result;
+    for (const tag of unknownTags) unknownTagCounts.set(tag, (unknownTagCounts.get(tag) || 0) + 1);
     const card = {
       login: user.login,
       name: user.name,
       avatarUrl: user.avatar_url,
       includesPrivate: Boolean(installationId),
       updatedAt: new Date().toISOString(),
-      ...result,
+      ...stats,
     };
     await store.put(card);
     // Draw the share image now, so the first link preview is instant.
@@ -359,6 +365,9 @@ app.get('/healthz/github', async (req, res) => {
     '',
     `recent failures (newest first, since last restart): ${failures.length ? '' : 'none'}`,
     ...failures.map((f) => `  ${f.at}  ${f.what}  ${f.detail}  ${JSON.stringify(f.ctx)}`),
+    '',
+    `unrecognised AI-looking co-author tags (people seen with it, since last restart): ${unknownTagCounts.size ? '' : 'none'}`,
+    ...[...unknownTagCounts].sort((a, b) => b[1] - a[1]).slice(0, 25).map(([tag, n]) => `  ${n}x  ${tag}`),
   ].join('\n'));
 });
 

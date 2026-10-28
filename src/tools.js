@@ -43,6 +43,24 @@ export function toolsInMessage(message) {
 
 export const toolById = Object.fromEntries(TOOLS.map((t) => [t.id, t]));
 
+// Co-author lines that look like an AI tool or bot but match nothing above.
+// Only bot-style identities are kept (a [bot] account, a no-reply address on
+// a company domain, or an "agent"/"AI" name), never ordinary people.
+const BOTLIKE = /\[bot\]|noreply@|no-reply@|\bagent\b|\bai\b|assistant|@local>?$/i;
+const HUMAN_NOREPLY = /^[^<]*<\d+\+[^@[\]]+@users\.noreply\.github\.com>$/i;
+const IGNORE = /dependabot|github-actions|renovate|pre-commit-ci|codecov|snyk|imgbot|allcontributors/i;
+
+export function unknownAiTags(message) {
+  const out = [];
+  for (const [, who] of message.matchAll(TRAILER)) {
+    const clean = who.replace(/\s*\([^)]*\)/g, '').trim();
+    if (TOOLS.some((t) => t.match.test(clean))) continue;
+    if (!BOTLIKE.test(clean) || HUMAN_NOREPLY.test(clean) || IGNORE.test(clean)) continue;
+    out.push(clean.slice(0, 120));
+  }
+  return out;
+}
+
 // Tool split for a saved card. Cards saved before multi-tool support were Claude only.
 export function cardTools(card) {
   const list = card.tools?.length ? card.tools : [{ id: 'claude', name: 'Claude', commits: card.commits, additions: card.additions }];
