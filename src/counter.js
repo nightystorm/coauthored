@@ -1,10 +1,11 @@
-// Counts a GitHub user's commits co-authored with Claude in a given year.
-// 1. Commit search finds the commits (max 1000 results per query, so big
-//    date ranges are split until each piece fits).
+// Counts a GitHub user's commits co-authored with AI tools in a given year.
+// 1. Commit search finds every commit with a co-author line (max 1000 results
+//    per query, so big date ranges are split until each piece fits). Each
+//    co-author line is matched against the tool list in tools.js.
 // 2. GraphQL fetches additions/deletions for 100 commits per request.
+import { toolsInMessage, toolById } from './tools.js';
 
 const API = 'https://api.github.com';
-const TRAILER = /co-authored-by:\s*claude\b/i;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function gh(token, url, opts = {}, attempt = 0) {
@@ -40,7 +41,7 @@ const day = 86400000;
 const iso = (t) => new Date(t).toISOString().slice(0, 10);
 
 async function searchRange(token, login, from, to, found, onProgress) {
-  const q = `author:${login} "Co-Authored-By: Claude" merge:false author-date:${iso(from)}..${iso(to)}`;
+  const q = `author:${login} "Co-authored-by" merge:false author-date:${iso(from)}..${iso(to)}`;
   const first = await gh(token, `/search/commits?q=${encodeURIComponent(q)}&per_page=100&page=1`);
   if (first.total_count > 1000 && to - from >= day) {
     const mid = from + Math.floor((to - from) / day / 2) * day;
@@ -51,7 +52,8 @@ async function searchRange(token, login, from, to, found, onProgress) {
   const pages = Math.min(10, Math.ceil(first.total_count / 100));
   const add = (items) => {
     for (const it of items) {
-      if (TRAILER.test(it.commit.message)) found.set(it.sha, it);
+      const tools = toolsInMessage(it.commit.message);
+      if (tools.length) found.set(it.sha, { ...it, tools });
     }
     onProgress?.({ phase: 'search', found: found.size });
   };
@@ -84,6 +86,7 @@ export async function countYear({ token, login, year, onProgress }) {
 
   const months = Array(12).fill(0);
   const repos = new Map();
+  const tools = new Map();
   let additions = 0;
   let deletions = 0;
   for (const it of items) {
@@ -91,6 +94,13 @@ export async function countYear({ token, login, year, onProgress }) {
     additions += s.additions;
     deletions += s.deletions;
     months[new Date(it.commit.author.date).getUTCMonth()] += s.additions;
+    // A commit credited to two tools splits its lines between them.
+    for (const id of it.tools) {
+      const t = tools.get(id) || { id, name: toolById[id].name, commits: 0, additions: 0 };
+      t.commits += 1;
+      t.additions += Math.round(s.additions / it.tools.length);
+      tools.set(id, t);
+    }
     const name = it.repository.full_name;
     const r = repos.get(name) || { name, private: it.repository.private, additions: 0 };
     r.additions += s.additions;
@@ -108,6 +118,7 @@ export async function countYear({ token, login, year, onProgress }) {
     deletions,
     repos: repos.size,
     months,
+    tools: [...tools.values()].sort((a, b) => b.additions - a.additions || b.commits - a.commits),
     topPublicRepo,
   };
 }

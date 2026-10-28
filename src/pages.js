@@ -1,4 +1,5 @@
 // HTML templates. Plain template strings, no build step.
+import { TOOLS, cardTools, headlineTool, splitText } from './tools.js';
 
 const esc = (s = '') =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -77,6 +78,16 @@ figcaption { font-family: var(--mono); font-size: 13px; color: var(--muted); }
 .ad { min-height: 90px; display: flex; justify-content: center; }
 .ad-placeholder { align-items: center; border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); font-family: var(--mono); font-size: 13px; }
 footer .links { display: flex; gap: 20px; }
+table.tools { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 16px; }
+table.tools th { text-align: left; font: 400 13px var(--mono); color: var(--muted); padding: 0 12px 8px 0; border-bottom: 1px solid var(--line); }
+table.tools td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); }
+table.tools th:not(:first-child), table.tools td:not(:first-child) { text-align: right; font-family: var(--mono); font-size: 15px; }
+table.tools td i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 10px; vertical-align: 0; }
+.supported { display: flex; flex-direction: column; gap: 12px; }
+.supported ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.supported li { font: 400 14px var(--mono); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; display: flex; align-items: center; gap: 8px; }
+.supported li i { width: 9px; height: 9px; border-radius: 50%; }
+.supported li i, table.tools td i { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 18%, transparent); }
 .perm { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 18px; }
 .perm h3 { margin: 0; font-size: 15px; font-family: var(--mono); font-weight: 400; color: var(--muted); }
 .perm ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
@@ -94,7 +105,7 @@ footer { display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-b
 const GH_ICON = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
 
 export function layout({ title, description, image, url, baseUrl, body }) {
-  const desc = description || 'Count the lines of code you shipped with Claude this year and share the card.';
+  const desc = description || 'Count the lines of code you shipped with Claude, Cursor, Codex and other AI tools this year, and share the card.';
   const img = image || `${baseUrl}/card/example.png`;
   return `<!doctype html>
 <html lang="en">
@@ -138,8 +149,8 @@ export function landingPage({ totals, year, error }) {
   return `
 ${error ? `<div class="notice err">${esc(ERRORS[error] || 'Something went wrong. Try again.')}</div>` : ''}
 <section class="hero">
-  <h1>How much code did you ship with <em>Claude</em> in ${year}?</h1>
-  <p class="lede">Sign in with GitHub. We add up every commit that carries a <code>Co-Authored-By: Claude</code> line and turn it into a card you can post.</p>
+  <h1>How much code did you ship with <em>AI</em> in ${year}?</h1>
+  <p class="lede">Sign in with GitHub. We add up every commit an AI tool co-authored, split it by tool, and turn it into a card you can post.</p>
   <div class="actions">
     <a class="btn primary" href="/login">${GH_ICON} Count my public repos</a>
     <a class="btn" href="/private">Include private repos</a>
@@ -148,15 +159,20 @@ ${error ? `<div class="notice err">${esc(ERRORS[error] || 'Something went wrong.
   ${totals.users > 0 ? `<p class="totals"><b>${fmt(totals.users)}</b> developers have counted <b>+${fmt(totals.lines)}</b> lines so far</p>` : ''}
 </section>
 <figure>
-  <img class="card-img" src="/card/example.png" alt="Example card showing +87,380 lines of code shipped with Claude, 299 commits across 3 repos" width="1200" height="630">
+  <img class="card-img" src="/card/example.png" alt="Example card showing +118,240 lines of code shipped with AI, split between Claude, Cursor, OpenAI Codex and Kimi" width="1200" height="630">
   <figcaption>Example card</figcaption>
 </figure>
 ${ad('ADSENSE_SLOT_HOME')}
 <ol class="steps">
   <li><b>Sign in</b><span>One click with GitHub. Public repos need no repo access at all.</span></li>
-  <li><b>We count</b><span>Commits you authored this year with Claude as co-author, merges left out.</span></li>
+  <li><b>We count</b><span>Commits you authored this year with an AI tool as co-author, merges left out.</span></li>
   <li><b>Share</b><span>Post your link on X, LinkedIn or WhatsApp. The card shows up as the preview.</span></li>
-</ol>`;
+</ol>
+<section class="supported">
+  <h2>Tools we recognise</h2>
+  <ul>${TOOLS.map((t) => `<li><i style="background:${esc(t.color)}"></i>${esc(t.name)}</li>`).join('')}</ul>
+  <p class="fine">We count a tool when its name appears in a commit's <code>Co-authored-by</code> line. Agents like Claude Code, Cursor's agent and Aider add that line for you. Inline autocomplete leaves no trace in the commit, so it can't be counted.</p>
+</section>`;
 }
 
 export function countingPage({ id, login }) {
@@ -175,7 +191,7 @@ export function countingPage({ id, login }) {
       if (j.status === 'done') { location.href = '/u/' + encodeURIComponent(j.login) + '?new=1' + (j.removed ? '&removed=1' : ''); return; }
       if (j.status === 'error' || j.status === 'missing') { log.textContent = 'The count failed. Go back and sign in again.'; return; }
       var p = j.progress || {};
-      if (p.phase === 'search') { log.textContent = 'Found ' + (p.found || 0) + ' Claude co-authored commits so far…'; bar.style.width = '30%'; }
+      if (p.phase === 'search') { log.textContent = 'Found ' + (p.found || 0) + ' AI co-authored commits so far…'; bar.style.width = '30%'; }
       if (p.phase === 'cleanup') { log.textContent = 'Removing our access from your GitHub…'; bar.style.width = '100%'; }
       if (p.phase === 'stats') { log.textContent = 'Adding up lines: ' + p.done + ' of ' + p.total + ' commits'; bar.style.width = (30 + 70 * p.done / Math.max(p.total, 1)) + '%'; }
       setTimeout(tick, 1200);
@@ -187,7 +203,9 @@ export function countingPage({ id, login }) {
 }
 
 export function sharePage({ card, pageUrl, image, justCounted, removed }) {
-  const text = `I shipped +${fmt(card.additions)} lines of code with Claude in ${card.year}. How much did you?`;
+  const tools = cardTools(card);
+  const split = splitText(card);
+  const text = `I shipped +${fmt(card.additions)} lines of code with ${headlineTool(card)} in ${card.year}${split ? ` (${split})` : ''}. How much did you?`;
   const enc = encodeURIComponent;
   const x = `https://twitter.com/intent/tweet?text=${enc(text)}&url=${enc(pageUrl)}`;
   const li = `https://www.linkedin.com/sharing/share-offsite/?url=${enc(pageUrl)}`;
@@ -196,14 +214,18 @@ export function sharePage({ card, pageUrl, image, justCounted, removed }) {
   return `
 <section class="hero">
   ${justCounted ? `<p class="mono" style="color:var(--add)">Done. This is your card.${removed ? ' Coauthored has been removed from your GitHub account.' : ''}</p>` : ''}
-  <h1>${empty ? `No Claude commits found for @${esc(card.login)} yet` : `@${esc(card.login)} shipped <em>+${fmt(card.additions)}</em> lines with Claude`}</h1>
+  <h1>${empty ? `No AI co-authored commits found for @${esc(card.login)} yet` : `@${esc(card.login)} shipped <em>+${fmt(card.additions)}</em> lines with ${esc(headlineTool(card))}`}</h1>
   <p class="lede">${empty
-    ? `We looked for commits in ${card.year} that you authored with a <code>Co-Authored-By: Claude</code> line.${card.includesPrivate ? '' : ' Only public repos were counted.'}`
+    ? `We looked for commits in ${card.year} that you authored with an AI tool in a <code>Co-authored-by</code> line.${card.includesPrivate ? '' : ' Only public repos were counted.'}`
     : `${fmt(card.commits)} commits across ${fmt(card.repos)} ${card.repos === 1 ? 'repo' : 'repos'} in ${card.year}, ${fmt(card.deletions)} lines deleted along the way.${card.includesPrivate ? '' : ' Public repos only.'}`}</p>
 </section>
 <figure>
-  <img class="card-img" src="${esc(image)}" alt="Card: +${fmt(card.additions)} lines of code shipped with Claude in ${card.year} by @${esc(card.login)}" width="1200" height="630">
+  <img class="card-img" src="${esc(image)}" alt="Card: +${fmt(card.additions)} lines of code shipped with ${esc(headlineTool(card))} in ${card.year} by @${esc(card.login)}" width="1200" height="630">
 </figure>
+${empty ? '' : `<table class="tools">
+  <thead><tr><th>Tool</th><th>Commits</th><th>Lines added</th><th>Share</th></tr></thead>
+  <tbody>${tools.map((t) => `<tr><td><i style="background:${esc(t.color)}"></i>${esc(t.name)}</td><td>${fmt(t.commits)}</td><td>+${fmt(t.additions)}</td><td>${Math.max(1, Math.round(t.share * 100))}%</td></tr>`).join('')}</tbody>
+</table>`}
 <div class="share">
   <a class="btn primary" href="${esc(x)}" target="_blank" rel="noopener">Post on X</a>
   <a class="btn" href="${esc(li)}" target="_blank" rel="noopener">Share on LinkedIn</a>
@@ -247,7 +269,7 @@ export function privacyPage(contact) {
   return `
 <section class="prose">
   <h1>Privacy</h1>
-  <p>When you sign in with GitHub, we use the access GitHub gives us to search for commits you authored this year that include a <code>Co-Authored-By: Claude</code> line, and to read how many lines each one added and deleted.</p>
+  <p>When you sign in with GitHub, we use the access GitHub gives us to search for commits you authored this year whose <code>Co-authored-by</code> lines name an AI tool, and to read how many lines each one added and deleted.</p>
   <p>We keep only the totals shown on your card: your GitHub username, display name, avatar link, commit count, lines added and deleted, number of repos and lines per month. We never store your code, commit messages or private repo names.</p>
   <p>For public repos, signing in only tells us who you are. GitHub gives us no access to your repositories.</p>
   <p>For private repos, you install our GitHub App with read-only access to the repositories you choose. It cannot change anything. As soon as the count finishes we uninstall the app from your account and revoke the sign-in, so nothing stays connected. We never keep your access token.</p>

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import satori from 'satori';
 import { Resvg } from '@resvg/resvg-js';
+import { cardTools, headlineTool } from './tools.js';
 
 const require = createRequire(import.meta.url);
 const font = (pkg, file) => fs.readFileSync(require.resolve(`@fontsource/${pkg}/files/${file}`));
@@ -42,11 +43,27 @@ async function avatarData(url) {
   }
 }
 
-function diffstat(add, del, cells = 30) {
-  const total = add + del || 1;
-  const plus = Math.max(add ? 1 : 0, Math.round((add / total) * cells));
-  return Array.from({ length: cells }, (_, i) =>
-    h('div', { width: 14, height: 22, borderRadius: 3, background: i < plus ? C.add : C.del }),
+// Stacked bar of lines per tool, plus a legend with the top tools.
+function toolSplit(card, width = 600) {
+  const list = cardTools(card);
+  const shown = list.slice(0, 4);
+  const rest = list.slice(4);
+  if (rest.length) {
+    shown.push({ id: 'other', name: `+${rest.length} more`, color: C.muted, share: rest.reduce((s, t) => s + t.share, 0) });
+  }
+  const gap = 3;
+  const usable = width - gap * (shown.length - 1);
+  return h(
+    'div',
+    { flexDirection: 'column', gap: 12 },
+    h('div', { gap, width }, ...shown.map((t) => h('div', { width: Math.max(6, Math.round(usable * t.share)), height: 22, borderRadius: 4, background: t.color }))),
+    h(
+      'div',
+      { gap: 22, fontFamily: 'Mono', fontSize: 19 },
+      ...shown.map((t) =>
+        h('div', { alignItems: 'center', gap: 8 }, h('div', { width: 12, height: 12, borderRadius: 3, background: t.color }), h('div', {}, `${t.name} ${Math.max(1, Math.round(t.share * 100))}%`)),
+      ),
+    ),
   );
 }
 
@@ -82,7 +99,7 @@ export async function renderCard(card, siteHost) {
       'div',
       { flexDirection: 'column', marginTop: 40 },
       h('div', { fontSize: 168, fontWeight: 800, color: C.add, lineHeight: 1, letterSpacing: -6 }, `+${fmt(card.additions)}`),
-      h('div', { fontSize: 36, fontWeight: 400, marginTop: 14 }, `lines of code shipped with Claude in ${card.year}`),
+      h('div', { fontSize: 36, fontWeight: 400, marginTop: 14 }, `lines of code shipped with ${headlineTool(card)} in ${card.year}`),
     ),
     // Footer: diffstat + monthly bars
     h(
@@ -100,7 +117,7 @@ export async function renderCard(card, siteHost) {
           h('div', { color: C.muted }, '·'),
           h('div', { color: C.del }, `-${fmt(card.deletions)}`),
         ),
-        h('div', { gap: 4 }, ...diffstat(card.additions, card.deletions)),
+        toolSplit(card),
       ),
       h(
         'div',

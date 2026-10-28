@@ -5,6 +5,7 @@ import express from 'express';
 import { countYear, getUser } from './counter.js';
 import { renderCard } from './card.js';
 import { store } from './store.js';
+import { headlineTool, splitText } from './tools.js';
 import { layout, landingPage, countingPage, sharePage, missingPage, privacyPage, privatePage } from './pages.js';
 
 const require = createRequire(import.meta.url);
@@ -44,10 +45,11 @@ app.get('/u/:login', async (req, res) => {
   }
   const pageUrl = `${BASE_URL}/u/${card.login}${year === thisYear() ? '' : `?year=${year}`}`;
   const image = `${BASE_URL}/card/${card.login}/${year}.png?v=${Date.parse(card.updatedAt)}`;
-  const desc = `${card.commits.toLocaleString('en-US')} commits co-authored with Claude in ${year}.`;
+  const split = splitText(card);
+  const desc = `${card.commits.toLocaleString('en-US')} commits co-authored with ${headlineTool(card)} in ${year}${split ? `: ${split}` : ''}.`;
   res.send(
     layout({
-      title: `@${card.login} shipped +${card.additions.toLocaleString('en-US')} lines with Claude`,
+      title: `@${card.login} shipped +${card.additions.toLocaleString('en-US')} lines with ${headlineTool(card)}`,
       description: desc,
       image,
       url: pageUrl,
@@ -60,7 +62,13 @@ app.get('/u/:login', async (req, res) => {
 // ---------- card images ----------
 const EXAMPLE = {
   login: 'octocat', name: 'Your name here', avatarUrl: 'https://avatars.githubusercontent.com/u/583231',
-  year: thisYear(), commits: 299, additions: 87380, deletions: 12087, repos: 3,
+  year: thisYear(), commits: 412, additions: 118240, deletions: 16012, repos: 5,
+  tools: [
+    { id: 'claude', name: 'Claude', commits: 299, additions: 87380 },
+    { id: 'cursor', name: 'Cursor', commits: 70, additions: 19800 },
+    { id: 'codex', name: 'OpenAI Codex', commits: 30, additions: 8200 },
+    { id: 'kimi', name: 'Kimi', commits: 13, additions: 2860 },
+  ],
   months: [1900, 3400, 2600, 5600, 7800, 6400, 9100, 12300, 10200, 28080, 0, 0],
 };
 let examplePng;
