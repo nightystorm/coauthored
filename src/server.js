@@ -107,18 +107,23 @@ const APP_SLUG = setting('GITHUB_APP_SLUG');
 const PRIVATE_KEY = setting('GITHUB_PRIVATE_KEY').replace(/\\n/g, '\n');
 const secure = BASE_URL.startsWith('https') ? '; Secure' : '';
 
-function startAuth(res) {
-  const state = crypto.randomBytes(16).toString('hex');
+// The state carries the user's choice (".p" = include private repos), so it
+// survives even when the phone finishes sign-in without our cookie.
+function startAuth(res, wantsPrivate = false) {
+  const state = crypto.randomBytes(16).toString('hex') + (wantsPrivate ? '.p' : '');
   res.setHeader('Set-Cookie', `oauth_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=900${secure}`);
   return state;
+}
+
+function signInUrl(state) {
+  const params = new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: `${BASE_URL}/auth/callback`, state, allow_signup: 'true' });
+  return `https://github.com/login/oauth/authorize?${params}`;
 }
 
 app.get('/login', (req, res) => {
   if (!CLIENT_ID) return res.status(500).send('GITHUB_CLIENT_ID is not set.');
   if (req.query.private === '1') return res.redirect('/private');
-  const state = startAuth(res);
-  const params = new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: `${BASE_URL}/auth/callback`, state, allow_signup: 'true' });
-  res.redirect(`https://github.com/login/oauth/authorize?${params}`);
+  res.redirect(signInUrl(startAuth(res)));
 });
 
 // Explains exactly what GitHub will ask before sending the user there.
@@ -126,17 +131,32 @@ app.get('/private', (req, res) => {
   res.send(layout({ title: 'Include private repos · Code Wrapped', baseUrl: BASE_URL, body: privatePage({ repoUrl: process.env.REPO_URL }) }));
 });
 
+// Private flow signs in first. The callback then reuses an existing install
+// of the app, or sends the user to install it if there is none.
 app.get('/login/private', (req, res) => {
-  if (!APP_SLUG) return res.status(500).send('GITHUB_APP_SLUG is not set.');
-  const state = startAuth(res);
-  res.redirect(`https://github.com/apps/${APP_SLUG}/installations/new?state=${state}`);
+  if (!CLIENT_ID || !APP_SLUG) return res.status(500).send('GitHub App settings are missing.');
+  res.redirect(signInUrl(startAuth(res, true)));
 });
+
+async function findInstallation(token, login) {
+  try {
+    const r = await fetch('https://api.github.com/user/installations', {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'codewrapped-app' },
+    });
+    if (!r.ok) return null;
+    const { installations = [] } = await r.json();
+    const mine = installations.find((i) => i.account?.login?.toLowerCase() === login.toLowerCase()) || installations[0];
+    return mine?.id || null;
+  } catch {
+    return null;
+  }
+}
 
 const jobs = new Map();
 
 app.get('/auth/callback', async (req, res) => {
   const state = cookie(req, 'oauth_state');
-  const installationId = req.query.installation_id ? Number(req.query.installation_id) : null;
+  let installationId = req.query.installation_id ? Number(req.query.installation_id) : null;
   const fail = (why, detail = '') => {
     console.error('sign-in failed', why, detail);
     res.redirect(`/?error=signin&why=${encodeURIComponent(why)}${detail ? `&detail=${encodeURIComponent(detail.slice(0, 160))}` : ''}`);
@@ -157,6 +177,17 @@ app.get('/auth/callback', async (req, res) => {
     if (!token) return fail('token', tokenJson.error_description || tokenJson.error || `HTTP ${tokenRes.status}`);
 
     const user = await getUser(token);
+
+    // If the app is installed on this account, the sign-in can already read
+    // those private repos, so count them and remove the install afterwards.
+    if (!installationId) installationId = await findInstallation(token, user.login);
+    const wantsPrivate = String(req.query.state || '').endsWith('.p');
+    if (wantsPrivate && !installationId) {
+      await revokeSignIn(token);
+      const next = startAuth(res, true);
+      return res.redirect(`https://github.com/apps/${APP_SLUG}/installations/new?state=${next}`);
+    }
+
     const id = crypto.randomBytes(12).toString('hex');
     const job = { status: 'running', login: user.login, progress: { phase: 'search', found: 0 }, startedAt: Date.now() };
     jobs.set(id, job);
