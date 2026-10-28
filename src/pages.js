@@ -6,6 +6,7 @@ const fmt = (n) => Number(n).toLocaleString('en-US');
 
 const ADSENSE = process.env.ADSENSE_CLIENT;
 const DEV = process.env.NODE_ENV !== 'production';
+const REPO_URL = process.env.REPO_URL;
 
 // One ad unit. Shows a dashed placeholder locally and nothing in production
 // until AdSense is configured.
@@ -75,6 +76,15 @@ figcaption { font-family: var(--mono); font-size: 13px; color: var(--muted); }
 .log { font-family: var(--mono); font-size: 15px; color: var(--muted); }
 .ad { min-height: 90px; display: flex; justify-content: center; }
 .ad-placeholder { align-items: center; border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); font-family: var(--mono); font-size: 13px; }
+footer .links { display: flex; gap: 20px; }
+.perm { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 22px; display: flex; flex-direction: column; gap: 18px; }
+.perm h3 { margin: 0; font-size: 15px; font-family: var(--mono); font-weight: 400; color: var(--muted); }
+.perm ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.perm li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; align-items: start; }
+.perm li i { font-style: normal; font-family: var(--mono); width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; background: var(--bg); border: 1px solid var(--line); color: var(--add); }
+.perm li i.no { color: var(--del); }
+.perm li b { display: block; }
+.perm li span { color: var(--muted); font-size: 15px; }
 footer { display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 16px; font-size: 14px; color: var(--muted); }
 .prose { display: flex; flex-direction: column; gap: 14px; }
 @media (max-width: 640px) { .steps { grid-template-columns: 1fr; } .btn { width: 100%; justify-content: center; } }
@@ -114,7 +124,7 @@ ${ADSENSE ? `<script async src="https://pagead2.googlesyndication.com/pagead/js/
 <div class="wrap">
 <header class="top"><a class="mark" href="/"><b>+</b>coauthored</a><a href="/privacy">Privacy</a></header>
 ${body}
-<footer><span>Not affiliated with Anthropic or GitHub.</span><a href="/privacy">How we handle your data</a></footer>
+<footer><span>Not affiliated with Anthropic or GitHub.</span><span class="links">${REPO_URL ? `<a href="${esc(REPO_URL)}" target="_blank" rel="noopener">Read the code</a>` : ''}<a href="/privacy">How we handle your data</a></span></footer>
 </div>
 </body>
 </html>`;
@@ -132,9 +142,9 @@ ${error ? `<div class="notice err">${esc(ERRORS[error] || 'Something went wrong.
   <p class="lede">Sign in with GitHub. We add up every commit that carries a <code>Co-Authored-By: Claude</code> line and turn it into a card you can post.</p>
   <div class="actions">
     <a class="btn primary" href="/login">${GH_ICON} Count my public repos</a>
-    <a class="btn" href="/login?private=1">Include private repos</a>
+    <a class="btn" href="/private">Include private repos</a>
   </div>
-  <p class="fine">Private repo names never appear on your card. We drop GitHub access as soon as the count is done.</p>
+  <p class="fine">Public repos need no access at all. For private repos you get read-only access you can limit to chosen repos, and we remove it the moment your card is ready.</p>
   ${totals.users > 0 ? `<p class="totals"><b>${fmt(totals.users)}</b> developers have counted <b>+${fmt(totals.lines)}</b> lines so far</p>` : ''}
 </section>
 <figure>
@@ -143,7 +153,7 @@ ${error ? `<div class="notice err">${esc(ERRORS[error] || 'Something went wrong.
 </figure>
 ${ad('ADSENSE_SLOT_HOME')}
 <ol class="steps">
-  <li><b>Sign in</b><span>One click with GitHub. Public repos need no extra permission.</span></li>
+  <li><b>Sign in</b><span>One click with GitHub. Public repos need no repo access at all.</span></li>
   <li><b>We count</b><span>Commits you authored this year with Claude as co-author, merges left out.</span></li>
   <li><b>Share</b><span>Post your link on X, LinkedIn or WhatsApp. The card shows up as the preview.</span></li>
 </ol>`;
@@ -162,10 +172,11 @@ export function countingPage({ id, login }) {
   var bar = document.getElementById('bar'), log = document.getElementById('log');
   function tick() {
     fetch('/api/jobs/${esc(id)}').then(function (r) { return r.json(); }).then(function (j) {
-      if (j.status === 'done') { location.href = '/u/' + encodeURIComponent(j.login) + '?new=1'; return; }
+      if (j.status === 'done') { location.href = '/u/' + encodeURIComponent(j.login) + '?new=1' + (j.removed ? '&removed=1' : ''); return; }
       if (j.status === 'error' || j.status === 'missing') { log.textContent = 'The count failed. Go back and sign in again.'; return; }
       var p = j.progress || {};
       if (p.phase === 'search') { log.textContent = 'Found ' + (p.found || 0) + ' Claude co-authored commits so far…'; bar.style.width = '30%'; }
+      if (p.phase === 'cleanup') { log.textContent = 'Removing our access from your GitHub…'; bar.style.width = '100%'; }
       if (p.phase === 'stats') { log.textContent = 'Adding up lines: ' + p.done + ' of ' + p.total + ' commits'; bar.style.width = (30 + 70 * p.done / Math.max(p.total, 1)) + '%'; }
       setTimeout(tick, 1200);
     }).catch(function () { setTimeout(tick, 2500); });
@@ -175,7 +186,7 @@ export function countingPage({ id, login }) {
 </script>`;
 }
 
-export function sharePage({ card, pageUrl, image, justCounted }) {
+export function sharePage({ card, pageUrl, image, justCounted, removed }) {
   const text = `I shipped +${fmt(card.additions)} lines of code with Claude in ${card.year}. How much did you?`;
   const enc = encodeURIComponent;
   const x = `https://twitter.com/intent/tweet?text=${enc(text)}&url=${enc(pageUrl)}`;
@@ -184,7 +195,7 @@ export function sharePage({ card, pageUrl, image, justCounted }) {
   const empty = card.commits === 0;
   return `
 <section class="hero">
-  ${justCounted ? '<p class="mono" style="color:var(--add)">Done. This is your card.</p>' : ''}
+  ${justCounted ? `<p class="mono" style="color:var(--add)">Done. This is your card.${removed ? ' Coauthored has been removed from your GitHub account.' : ''}</p>` : ''}
   <h1>${empty ? `No Claude commits found for @${esc(card.login)} yet` : `@${esc(card.login)} shipped <em>+${fmt(card.additions)}</em> lines with Claude`}</h1>
   <p class="lede">${empty
     ? `We looked for commits in ${card.year} that you authored with a <code>Co-Authored-By: Claude</code> line.${card.includesPrivate ? '' : ' Only public repos were counted.'}`
@@ -201,7 +212,7 @@ export function sharePage({ card, pageUrl, image, justCounted }) {
   <a class="btn" href="${esc(image)}" download="coauthored-${esc(card.login)}-${card.year}.png">Download image</a>
   <button class="btn" id="native" type="button" hidden>Share…</button>
 </div>
-<p class="fine">On LinkedIn and WhatsApp the card appears as the link preview. Counted ${new Date(card.updatedAt).toUTCString().slice(5, 16)}. <a href="/login${card.includesPrivate ? '?private=1' : ''}">Count again</a></p>
+<p class="fine">On LinkedIn and WhatsApp the card appears as the link preview. Counted ${new Date(card.updatedAt).toUTCString().slice(5, 16)}. <a href="${card.includesPrivate ? '/private' : '/login'}">Count again</a></p>
 ${ad('ADSENSE_SLOT_SHARE')}
 <section class="hero">
   <h2>Count yours</h2>
@@ -238,9 +249,36 @@ export function privacyPage(contact) {
   <h1>Privacy</h1>
   <p>When you sign in with GitHub, we use the access GitHub gives us to search for commits you authored this year that include a <code>Co-Authored-By: Claude</code> line, and to read how many lines each one added and deleted.</p>
   <p>We keep only the totals shown on your card: your GitHub username, display name, avatar link, commit count, lines added and deleted, number of repos and lines per month. We never store your code, commit messages or private repo names.</p>
-  <p>We do not keep your GitHub access token. As soon as the count finishes we ask GitHub to revoke it, so the app no longer appears under your authorized apps.</p>
+  <p>For public repos, signing in only tells us who you are. GitHub gives us no access to your repositories.</p>
+  <p>For private repos, you install our GitHub App with read-only access to the repositories you choose. It cannot change anything. As soon as the count finishes we uninstall the app from your account and revoke the sign-in, so nothing stays connected. We never keep your access token.</p>
   <p>Your card page is public, so anyone with the link can see it. To have it removed${contact ? `, email <a href="mailto:${esc(contact)}">${esc(contact)}</a> and we will delete it` : ', contact us and we will delete it'}.</p>
   <p>This site shows ads served by Google. Google may use cookies to show ads based on your visits to this and other sites. You can manage this in <a href="https://adssettings.google.com" target="_blank" rel="noopener">Google Ad Settings</a>.</p>
   <p>Coauthored is not affiliated with Anthropic or GitHub.</p>
 </section>`;
+}
+
+export function privatePage({ repoUrl }) {
+  return `
+<section class="hero">
+  <h1>Include private repos</h1>
+  <p class="lede">GitHub will ask you to install Coauthored. Here is exactly what that screen means before you see it.</p>
+</section>
+<section class="perm">
+  <h3>What GitHub will ask for</h3>
+  <ul>
+    <li><i>✓</i><div><b>Read-only access to code and metadata</b><span>GitHub has no narrower permission for reading commits. We only read each commit's message and its line count.</span></div></li>
+    <li><i>✓</i><div><b>All repositories, or only the ones you pick</b><span>Choose "Only select repositories" if you want to count some and leave others out.</span></div></li>
+    <li><i class="no">×</i><div><b>No write access</b><span>The app cannot push, edit, delete or open anything in your repos.</span></div></li>
+  </ul>
+  <h3>What happens after</h3>
+  <ul>
+    <li><i>−</i><div><b>We remove ourselves</b><span>The moment your card is ready, we uninstall the app from your account and drop the sign-in. You can check under GitHub Settings, Applications.</span></div></li>
+    <li><i>−</i><div><b>Only totals are kept</b><span>Commit count, lines added and deleted, lines per month. No code, no commit messages, no private repo names.</span></div></li>
+  </ul>
+</section>
+<div class="actions">
+  <a class="btn primary" href="/login/private">${GH_ICON} Continue to GitHub</a>
+  <a class="btn" href="/login">Public repos only</a>
+  ${repoUrl ? `<a class="btn" href="${esc(repoUrl)}" target="_blank" rel="noopener">Read the code</a>` : ''}
+</div>`;
 }

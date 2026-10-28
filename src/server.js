@@ -5,7 +5,7 @@ import express from 'express';
 import { countYear, getUser } from './counter.js';
 import { renderCard } from './card.js';
 import { store } from './store.js';
-import { layout, landingPage, countingPage, sharePage, missingPage, privacyPage } from './pages.js';
+import { layout, landingPage, countingPage, sharePage, missingPage, privacyPage, privatePage } from './pages.js';
 
 const require = createRequire(import.meta.url);
 const PORT = Number(process.env.PORT || 3000);
@@ -52,7 +52,7 @@ app.get('/u/:login', async (req, res) => {
       image,
       url: pageUrl,
       baseUrl: BASE_URL,
-      body: sharePage({ card, pageUrl, image, justCounted: req.query.new === '1' }),
+      body: sharePage({ card, pageUrl, image, justCounted: req.query.new === '1', removed: req.query.removed === '1' }),
     }),
   );
 });
@@ -88,27 +88,49 @@ app.get('/card/:login/:year.png', async (req, res, next) => {
 });
 
 // ---------- GitHub sign-in ----------
+// One GitHub App does both flows:
+// - Public: plain sign-in. GitHub only confirms who the user is; no repo access.
+// - Private: the user installs the app with read-only Contents access on the
+//   repos they pick. After counting we delete the installation and the sign-in.
+const APP_ID = process.env.GITHUB_APP_ID;
+const APP_SLUG = process.env.GITHUB_APP_SLUG;
+const PRIVATE_KEY = (process.env.GITHUB_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+const secure = BASE_URL.startsWith('https') ? '; Secure' : '';
+
+function startAuth(res) {
+  const state = crypto.randomBytes(16).toString('hex');
+  res.setHeader('Set-Cookie', `oauth_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=900${secure}`);
+  return state;
+}
+
 app.get('/login', (req, res) => {
   if (!CLIENT_ID) return res.status(500).send('GITHUB_CLIENT_ID is not set.');
-  const state = crypto.randomBytes(16).toString('hex');
-  const wantsPrivate = req.query.private === '1';
-  res.setHeader('Set-Cookie', `oauth_state=${state}.${wantsPrivate ? 1 : 0}; HttpOnly; SameSite=Lax; Path=/; Max-Age=600${BASE_URL.startsWith('https') ? '; Secure' : ''}`);
-  const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    redirect_uri: `${BASE_URL}/auth/callback`,
-    state,
-    // No scope = public repos only. "repo" is GitHub's only way to read private commits.
-    scope: wantsPrivate ? 'repo' : '',
-    allow_signup: 'true',
-  });
+  if (req.query.private === '1') return res.redirect('/private');
+  const state = startAuth(res);
+  const params = new URLSearchParams({ client_id: CLIENT_ID, redirect_uri: `${BASE_URL}/auth/callback`, state, allow_signup: 'true' });
   res.redirect(`https://github.com/login/oauth/authorize?${params}`);
+});
+
+// Explains exactly what GitHub will ask before sending the user there.
+app.get('/private', (req, res) => {
+  res.send(layout({ title: 'Include private repos · Coauthored', baseUrl: BASE_URL, body: privatePage({ repoUrl: process.env.REPO_URL }) }));
+});
+
+app.get('/login/private', (req, res) => {
+  if (!APP_SLUG) return res.status(500).send('GITHUB_APP_SLUG is not set.');
+  const state = startAuth(res);
+  res.redirect(`https://github.com/apps/${APP_SLUG}/installations/new?state=${state}`);
 });
 
 const jobs = new Map();
 
 app.get('/auth/callback', async (req, res) => {
-  const [state, priv] = (cookie(req, 'oauth_state') || '').split('.');
-  if (!req.query.code || !state || state !== req.query.state) return res.redirect('/?error=signin');
+  const state = cookie(req, 'oauth_state');
+  const installationId = req.query.installation_id ? Number(req.query.installation_id) : null;
+  // The install flow does not always pass state back, so only enforce it when present.
+  if (!req.query.code || (req.query.state && req.query.state !== state) || (!req.query.state && !installationId)) {
+    return res.redirect('/?error=signin');
+  }
   try {
     const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
       method: 'POST',
@@ -122,7 +144,7 @@ app.get('/auth/callback', async (req, res) => {
     const id = crypto.randomBytes(12).toString('hex');
     const job = { status: 'running', login: user.login, progress: { phase: 'search', found: 0 }, startedAt: Date.now() };
     jobs.set(id, job);
-    runJob(job, token, user, priv === '1');
+    runJob(job, token, user, installationId);
     res.setHeader('Set-Cookie', 'oauth_state=; Path=/; Max-Age=0');
     res.redirect(`/counting/${id}`);
   } catch (e) {
@@ -131,7 +153,7 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-async function runJob(job, token, user, includesPrivate) {
+async function runJob(job, token, user, installationId) {
   try {
     const year = thisYear();
     const result = await countYear({ token, login: user.login, year, onProgress: (p) => (job.progress = p) });
@@ -139,22 +161,47 @@ async function runJob(job, token, user, includesPrivate) {
       login: user.login,
       name: user.name,
       avatarUrl: user.avatar_url,
-      includesPrivate,
+      includesPrivate: Boolean(installationId),
       updatedAt: new Date().toISOString(),
       ...result,
     });
-    job.status = 'done';
+    job.ok = true;
   } catch (e) {
     console.error('count failed', user.login, e);
-    job.status = 'error';
   } finally {
-    revoke(token);
+    job.progress = { phase: 'cleanup' };
+    await revokeSignIn(token);
+    if (installationId) job.removed = await removeInstallation(installationId);
+    job.status = job.ok ? 'done' : 'error';
     setTimeout(() => jobs.delete([...jobs].find(([, j]) => j === job)?.[0]), 10 * 60 * 1000);
   }
 }
 
-// We only need the token for one count, so we hand it back to GitHub right away.
-async function revoke(token) {
+// Signs a short-lived token that proves requests come from the app itself.
+function appJwt() {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const now = Math.floor(Date.now() / 1000);
+  const body = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({ iat: now - 60, exp: now + 540, iss: APP_ID })}`;
+  return `${body}.${crypto.sign('RSA-SHA256', Buffer.from(body), PRIVATE_KEY).toString('base64url')}`;
+}
+
+// Uninstalls the app from the user's account so no access is left behind.
+async function removeInstallation(installationId) {
+  try {
+    const r = await fetch(`https://api.github.com/app/installations/${installationId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${appJwt()}`, Accept: 'application/vnd.github+json', 'User-Agent': 'coauthored-app' },
+    });
+    if (r.status !== 204) console.error('uninstall failed', installationId, r.status, await r.text());
+    return r.status === 204;
+  } catch (e) {
+    console.error('uninstall failed', installationId, e.message);
+    return false;
+  }
+}
+
+// Drops the user's sign-in so the app no longer appears under their authorized apps.
+async function revokeSignIn(token) {
   try {
     await fetch(`https://api.github.com/applications/${CLIENT_ID}/grant`, {
       method: 'DELETE',
@@ -179,7 +226,7 @@ app.get('/counting/:id', (req, res) => {
 app.get('/api/jobs/:id', (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ status: 'missing' });
-  res.json({ status: job.status, login: job.login, progress: job.progress });
+  res.json({ status: job.status, login: job.login, progress: job.progress, removed: job.removed });
 });
 
 // ---------- misc ----------
