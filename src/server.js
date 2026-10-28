@@ -5,6 +5,7 @@ import express from 'express';
 import { countYear, getUser } from './counter.js';
 import { renderCard } from './card.js';
 import { store, topPercent } from './store.js';
+import { rateLimit } from './ratelimit.js';
 import { headlineTool, splitText } from './tools.js';
 import { layout, landingPage, countingPage, sharePage, missingPage, privacyPage, privatePage } from './pages.js';
 
@@ -22,9 +23,16 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
-// Fonts for the web pages, straight from the npm packages.
-app.use('/fonts/bricolage', express.static(path.dirname(require.resolve('@fontsource/bricolage-grotesque/files/bricolage-grotesque-latin-400-normal.woff2')), { maxAge: '30d' }));
-app.use('/fonts/mono', express.static(path.dirname(require.resolve('@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2')), { maxAge: '30d' }));
+// Per visitor: 300 requests a minute overall, 20 a minute for sign-in.
+// Link-preview crawlers are exempt (see ratelimit.js).
+app.use(rateLimit({ limit: 300, name: 'all' }));
+app.use(['/login', '/auth'], rateLimit({ limit: 20, name: 'sign-in' }));
+
+// Fonts for the web pages, straight from the npm packages. Font files never
+// change under the same name, so browsers may keep them for a year.
+const fontOpts = { maxAge: '365d', immutable: true };
+app.use('/fonts/bricolage', express.static(path.dirname(require.resolve('@fontsource/bricolage-grotesque/files/bricolage-grotesque-latin-400-normal.woff2')), fontOpts));
+app.use('/fonts/mono', express.static(path.dirname(require.resolve('@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2')), fontOpts));
 
 const cookie = (req, name) =>
   (req.headers.cookie || '').split(';').map((c) => c.trim().split('=')).find(([k]) => k === name)?.[1];
@@ -86,20 +94,37 @@ app.get('/card/example.png', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// Card images: memory first, then the database, and only drawn when neither
+// has this version. Many requests for the same new card share one drawing.
 const pngCache = new Map();
+const drawing = new Map();
+async function cardPng(saved) {
+  const card = { ...saved, rank: await topPercent(saved).catch(() => null) };
+  const key = `${card.login.toLowerCase()}:${card.year}:${card.updatedAt}:${card.rank || 0}`;
+  const cached = pngCache.get(key);
+  if (cached) return cached;
+  if (!drawing.has(key)) {
+    drawing.set(key, (async () => {
+      let png = await store.getImage(key);
+      if (!png) {
+        png = await renderCard(card, HOST);
+        await store.putImage(key, card.login, card.year, png);
+      }
+      if (pngCache.size > 300) pngCache.delete(pngCache.keys().next().value);
+      pngCache.set(key, png);
+      return png;
+    })().finally(() => drawing.delete(key)));
+  }
+  return drawing.get(key);
+}
+
 app.get('/card/:login/:year.png', async (req, res, next) => {
   try {
     const saved = await store.get(req.params.login, Number(req.params.year));
     if (!saved) return res.sendStatus(404);
-    const card = { ...saved, rank: await topPercent(saved).catch(() => null) };
-    const key = `${card.login}:${card.year}:${card.updatedAt}:${card.rank || 0}`;
-    let png = pngCache.get(key);
-    if (!png) {
-      png = await renderCard(card, HOST);
-      if (pngCache.size > 500) pngCache.clear();
-      pngCache.set(key, png);
-    }
-    res.type('png').set('Cache-Control', 'public, max-age=3600').send(png);
+    const png = await cardPng(saved);
+    // Page links carry ?v=<version>, so that exact URL never changes content.
+    res.type('png').set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'public, max-age=3600').send(png);
   } catch (e) { next(e); }
 });
 
@@ -209,14 +234,18 @@ async function runJob(job, token, user, installationId) {
   try {
     const year = thisYear();
     const result = await countYear({ token, login: user.login, year, onProgress: (p) => (job.progress = p) });
-    await store.put({
+    const card = {
       login: user.login,
       name: user.name,
       avatarUrl: user.avatar_url,
       includesPrivate: Boolean(installationId),
       updatedAt: new Date().toISOString(),
       ...result,
-    });
+    };
+    await store.put(card);
+    // Draw the share image now, so the first link preview is instant.
+    job.progress = { phase: 'card' };
+    await cardPng(card).catch((e) => console.error('card render failed', card.login, e.message));
     job.ok = true;
   } catch (e) {
     console.error('count failed', user.login, e);

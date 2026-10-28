@@ -18,6 +18,14 @@ if (process.env.DATABASE_URL) {
     updated_at timestamptz not null default now(),
     primary key (login, year)
   )`);
+  // Rendered card images, one per card version (data + rank).
+  await pool.query(`create table if not exists card_images (
+    key text primary key,
+    login text not null,
+    year int not null,
+    png bytea not null,
+    created_at timestamptz not null default now()
+  )`);
   impl = {
     async get(login, year) {
       const r = await pool.query('select data from cards where login = $1 and year = $2', [login.toLowerCase(), year]);
@@ -44,11 +52,25 @@ if (process.env.DATABASE_URL) {
       );
       return r.rows[0];
     },
+    async getImage(key) {
+      const r = await pool.query('select png from card_images where key = $1', [key]);
+      return r.rows[0]?.png || null;
+    },
+    // Saves the new version and drops older versions of the same card.
+    async putImage(key, login, year, png) {
+      await pool.query(
+        `insert into card_images (key, login, year, png) values ($1, $2, $3, $4) on conflict (key) do nothing`,
+        [key, login.toLowerCase(), year, png],
+      );
+      await pool.query('delete from card_images where login = $1 and year = $2 and key <> $3', [login.toLowerCase(), year, key]);
+    },
   };
 } else {
   const { fileURLToPath } = await import('node:url');
   const file = fileURLToPath(new URL('../data/cards.json', import.meta.url));
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  const imgDir = path.join(path.dirname(file), 'images');
+  fs.mkdirSync(imgDir, { recursive: true });
   const load = () => {
     try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return {}; }
   };
@@ -67,6 +89,15 @@ if (process.env.DATABASE_URL) {
     async rank(year, additions) {
       const peers = Object.values(load()).filter((c) => c.year === year && c.additions > 0);
       return { above: peers.filter((c) => c.additions > additions).length, total: peers.length };
+    },
+    async getImage(key) {
+      try { return fs.readFileSync(path.join(imgDir, `${encodeURIComponent(key)}.png`)); } catch { return null; }
+    },
+    async putImage(key, login, year, png) {
+      fs.mkdirSync(imgDir, { recursive: true });
+      const prefix = encodeURIComponent(`${login.toLowerCase()}:${year}:`);
+      for (const f of fs.readdirSync(imgDir)) if (f.startsWith(prefix)) fs.rmSync(path.join(imgDir, f));
+      fs.writeFileSync(path.join(imgDir, `${encodeURIComponent(key)}.png`), png);
     },
   };
 }

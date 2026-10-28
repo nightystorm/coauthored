@@ -200,6 +200,7 @@ export function countingPage({ id, login }) {
       if (j.status === 'error' || j.status === 'missing') { log.textContent = 'The count failed' + (j.error ? ': ' + j.error : '.') + ' Go back and sign in again.'; return; }
       var p = j.progress || {};
       if (p.phase === 'search') { log.textContent = 'Found ' + (p.found || 0) + ' AI co-authored commits so far…'; bar.style.width = '30%'; }
+      if (p.phase === 'card') { log.textContent = 'Drawing your card…'; bar.style.width = '95%'; }
       if (p.phase === 'cleanup') { log.textContent = 'Removing our access from your GitHub…'; bar.style.width = '100%'; }
       if (p.phase === 'stats') { log.textContent = 'Adding up lines: ' + p.done + ' of ' + p.total + ' commits'; bar.style.width = (30 + 70 * p.done / Math.max(p.total, 1)) + '%'; }
       setTimeout(tick, 1200);
