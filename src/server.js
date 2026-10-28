@@ -185,11 +185,20 @@ async function findInstallation(token, login) {
 
 const jobs = new Map();
 
+// Last few failures, shown on /healthz/github. No usernames or tokens: only
+// the kind of failure, GitHub's message and which flow it was.
+const failures = [];
+function noteFailure(what, detail, ctx = {}) {
+  failures.unshift({ at: new Date().toISOString().slice(0, 19).replace('T', ' '), what, detail: String(detail || '').replace(/gh[opsu]_[A-Za-z0-9]+/g, '[token]').slice(0, 200), ctx });
+  failures.length = Math.min(failures.length, 15);
+}
+
 app.get('/auth/callback', async (req, res) => {
   const state = cookie(req, 'oauth_state');
   let installationId = req.query.installation_id ? Number(req.query.installation_id) : null;
   const fail = (why, detail = '') => {
     console.error('sign-in failed', why, detail);
+    noteFailure(`sign-in: ${why}`, detail, { private: String(req.query.state || '').endsWith('.p'), install: Boolean(req.query.installation_id), setup: req.query.setup_action || '' });
     res.redirect(`/?error=signin&why=${encodeURIComponent(why)}${detail ? `&detail=${encodeURIComponent(detail.slice(0, 160))}` : ''}`);
   };
   if (req.query.error) return fail('denied', req.query.error_description || req.query.error);
@@ -250,6 +259,7 @@ async function runJob(job, token, user, installationId) {
   } catch (e) {
     console.error('count failed', user.login, e);
     job.error = String(e.message || e).slice(0, 300);
+    noteFailure('count', job.error, { private: Boolean(installationId) });
   } finally {
     job.progress = { phase: 'cleanup' };
     await revokeSignIn(token);
@@ -346,6 +356,9 @@ app.get('/healthz/github', async (req, res) => {
     `private key: ${key}`,
     `base url: ${BASE_URL}`,
     `accounts with the app installed right now: ${installs}`,
+    '',
+    `recent failures (newest first, since last restart): ${failures.length ? '' : 'none'}`,
+    ...failures.map((f) => `  ${f.at}  ${f.what}  ${f.detail}  ${JSON.stringify(f.ctx)}`),
   ].join('\n'));
 });
 
