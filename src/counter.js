@@ -13,7 +13,7 @@ async function gh(token, url, opts = {}, attempt = 0) {
     ...opts,
     headers: {
       Accept: 'application/vnd.github+json',
-      'User-Agent': 'coauthored-app',
+      'User-Agent': 'codewrapped-app',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...opts.headers,
     },

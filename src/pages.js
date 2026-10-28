@@ -115,7 +115,7 @@ export function layout({ title, description, image, url, baseUrl, body }) {
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(desc)}">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Coauthored">
+<meta property="og:site_name" content="Code Wrapped">
 <meta property="og:title" content="${esc(title)}">
 <meta property="og:description" content="${esc(desc)}">
 <meta property="og:image" content="${esc(img)}">
@@ -133,7 +133,7 @@ ${ADSENSE ? `<script async src="https://pagead2.googlesyndication.com/pagead/js/
 </head>
 <body>
 <div class="wrap">
-<header class="top"><a class="mark" href="/"><b>+</b>coauthored</a><a href="/privacy">Privacy</a></header>
+<header class="top"><a class="mark" href="/"><b>+</b>codewrapped</a><a href="/privacy">Privacy</a></header>
 ${body}
 <footer><span>Not affiliated with Anthropic or GitHub.</span><span class="links">${REPO_URL ? `<a href="${esc(REPO_URL)}" target="_blank" rel="noopener">Read the code</a>` : ''}<a href="/privacy">How we handle your data</a></span></footer>
 </div>
@@ -213,7 +213,7 @@ export function sharePage({ card, pageUrl, image, justCounted, removed }) {
   const empty = card.commits === 0;
   return `
 <section class="hero">
-  ${justCounted ? `<p class="mono" style="color:var(--add)">Done. This is your card.${removed ? ' Coauthored has been removed from your GitHub account.' : ''}</p>` : ''}
+  ${justCounted ? `<p class="mono" style="color:var(--add)">Done. This is your card.${removed ? ' Code Wrapped has been removed from your GitHub account.' : ''}</p>` : ''}
   <h1>${empty ? `No AI co-authored commits found for @${esc(card.login)} yet` : `@${esc(card.login)} shipped <em>+${fmt(card.additions)}</em> lines with ${esc(headlineTool(card))}`}</h1>
   <p class="lede">${empty
     ? `We looked for commits in ${card.year} that you authored with an AI tool in a <code>Co-authored-by</code> line.${card.includesPrivate ? '' : ' Only public repos were counted.'}`
@@ -231,7 +231,7 @@ ${empty ? '' : `<table class="tools">
   <a class="btn" href="${esc(li)}" target="_blank" rel="noopener">Share on LinkedIn</a>
   <a class="btn" href="${esc(wa)}" target="_blank" rel="noopener">Send on WhatsApp</a>
   <button class="btn" id="copy" type="button">Copy link</button>
-  <a class="btn" href="${esc(image)}" download="coauthored-${esc(card.login)}-${card.year}.png">Download image</a>
+  <a class="btn" href="${esc(image)}" download="codewrapped-${esc(card.login)}-${card.year}.png">Download image</a>
   <button class="btn" id="native" type="button" hidden>Share…</button>
 </div>
 <p class="fine">On LinkedIn and WhatsApp the card appears as the link preview. Counted ${new Date(card.updatedAt).toUTCString().slice(5, 16)}. <a href="${card.includesPrivate ? '/private' : '/login'}">Count again</a></p>
@@ -250,7 +250,7 @@ ${ad('ADSENSE_SLOT_SHARE')}
   var native = document.getElementById('native');
   if (navigator.share) {
     native.hidden = false;
-    native.addEventListener('click', function () { navigator.share({ title: 'Coauthored', text: text, url: url }).catch(function () {}); });
+    native.addEventListener('click', function () { navigator.share({ title: 'Code Wrapped', text: text, url: url }).catch(function () {}); });
   }
 })();
 </script>`;
@@ -275,7 +275,7 @@ export function privacyPage(contact) {
   <p>For private repos, you install our GitHub App with read-only access to the repositories you choose. It cannot change anything. As soon as the count finishes we uninstall the app from your account and revoke the sign-in, so nothing stays connected. We never keep your access token.</p>
   <p>Your card page is public, so anyone with the link can see it. To have it removed${contact ? `, email <a href="mailto:${esc(contact)}">${esc(contact)}</a> and we will delete it` : ', contact us and we will delete it'}.</p>
   <p>This site shows ads served by Google. Google may use cookies to show ads based on your visits to this and other sites. You can manage this in <a href="https://adssettings.google.com" target="_blank" rel="noopener">Google Ad Settings</a>.</p>
-  <p>Coauthored is not affiliated with Anthropic or GitHub.</p>
+  <p>Code Wrapped is not affiliated with Anthropic or GitHub.</p>
 </section>`;
 }
 
@@ -283,7 +283,7 @@ export function privatePage({ repoUrl }) {
   return `
 <section class="hero">
   <h1>Include private repos</h1>
-  <p class="lede">GitHub will ask you to install Coauthored. Here is exactly what that screen means before you see it.</p>
+  <p class="lede">GitHub will ask you to install Code Wrapped. Here is exactly what that screen means before you see it.</p>
 </section>
 <section class="perm">
   <h3>What GitHub will ask for</h3>

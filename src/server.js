@@ -30,18 +30,18 @@ const cookie = (req, name) =>
 // ---------- pages ----------
 app.get('/', async (req, res) => {
   const totals = await store.stats().catch(() => ({ users: 0, lines: 0 }));
-  res.send(layout({ title: 'Coauthored', baseUrl: BASE_URL, body: landingPage({ totals, year: thisYear(), error: req.query.error }) }));
+  res.send(layout({ title: 'Code Wrapped', baseUrl: BASE_URL, body: landingPage({ totals, year: thisYear(), error: req.query.error }) }));
 });
 
 app.get('/privacy', (req, res) => {
-  res.send(layout({ title: 'Privacy · Coauthored', baseUrl: BASE_URL, body: privacyPage(process.env.CONTACT_EMAIL) }));
+  res.send(layout({ title: 'Privacy · Code Wrapped', baseUrl: BASE_URL, body: privacyPage(process.env.CONTACT_EMAIL) }));
 });
 
 app.get('/u/:login', async (req, res) => {
   const year = Number(req.query.year) || thisYear();
   const card = await store.get(req.params.login, year);
   if (!card) {
-    return res.status(404).send(layout({ title: 'Coauthored', baseUrl: BASE_URL, body: missingPage(req.params.login) }));
+    return res.status(404).send(layout({ title: 'Code Wrapped', baseUrl: BASE_URL, body: missingPage(req.params.login) }));
   }
   const pageUrl = `${BASE_URL}/u/${card.login}${year === thisYear() ? '' : `?year=${year}`}`;
   const image = `${BASE_URL}/card/${card.login}/${year}.png?v=${Date.parse(card.updatedAt)}`;
@@ -121,7 +121,7 @@ app.get('/login', (req, res) => {
 
 // Explains exactly what GitHub will ask before sending the user there.
 app.get('/private', (req, res) => {
-  res.send(layout({ title: 'Include private repos · Coauthored', baseUrl: BASE_URL, body: privatePage({ repoUrl: process.env.REPO_URL }) }));
+  res.send(layout({ title: 'Include private repos · Code Wrapped', baseUrl: BASE_URL, body: privatePage({ repoUrl: process.env.REPO_URL }) }));
 });
 
 app.get('/login/private', (req, res) => {
@@ -198,7 +198,7 @@ async function removeInstallation(installationId) {
   try {
     const r = await fetch(`https://api.github.com/app/installations/${installationId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${appJwt()}`, Accept: 'application/vnd.github+json', 'User-Agent': 'coauthored-app' },
+      headers: { Authorization: `Bearer ${appJwt()}`, Accept: 'application/vnd.github+json', 'User-Agent': 'codewrapped-app' },
     });
     if (r.status !== 204) console.error('uninstall failed', installationId, r.status, await r.text());
     return r.status === 204;
@@ -216,7 +216,7 @@ async function revokeSignIn(token) {
       headers: {
         Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}`,
         Accept: 'application/vnd.github+json',
-        'User-Agent': 'coauthored-app',
+        'User-Agent': 'codewrapped-app',
       },
       body: JSON.stringify({ access_token: token }),
     });
@@ -228,7 +228,7 @@ async function revokeSignIn(token) {
 app.get('/counting/:id', (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.redirect('/');
-  res.send(layout({ title: 'Counting · Coauthored', baseUrl: BASE_URL, body: countingPage({ id: req.params.id, login: job.login }) }));
+  res.send(layout({ title: 'Counting · Code Wrapped', baseUrl: BASE_URL, body: countingPage({ id: req.params.id, login: job.login }) }));
 });
 
 app.get('/api/jobs/:id', (req, res) => {
@@ -250,4 +250,4 @@ app.use((err, req, res, next) => {
   res.status(500).send('Something went wrong.');
 });
 
-app.listen(PORT, () => console.log(`Coauthored running on ${BASE_URL}`));
+app.listen(PORT, () => console.log(`Code Wrapped running on ${BASE_URL}`));

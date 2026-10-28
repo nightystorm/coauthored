@@ -92,7 +92,7 @@ export async function renderCard(card, siteHost) {
           h('div', { fontSize: 22, color: C.muted, fontFamily: 'Mono' }, `@${card.login}`),
         ),
       ),
-      h('div', { fontFamily: 'Mono', fontSize: 22, color: C.muted, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 14px' }, `${card.year}`),
+      h('div', { fontFamily: 'Mono', fontSize: 22, color: C.muted, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 14px' }, `${card.year} Wrapped`),
     ),
     // Hero number
     h(
