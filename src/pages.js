@@ -1,5 +1,7 @@
 // HTML templates. Plain template strings, no build step.
 import { TOOLS, cardTools, headlineTool, splitText } from './tools.js';
+import { statColumns } from './card.js';
+import { BULK_LINES } from './counter.js';
 
 const esc = (s = '') =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -83,6 +85,12 @@ table.tools th { text-align: left; font: 400 13px var(--mono); color: var(--mute
 table.tools td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--line); }
 table.tools th:not(:first-child), table.tools td:not(:first-child) { text-align: right; font-family: var(--mono); font-size: 15px; }
 table.tools td i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 10px; vertical-align: 0; }
+dl.stats { margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px 24px; }
+dl.stats div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+dl.stats dt { font-size: 30px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+dl.stats dd { margin: 0; font: 400 14px var(--mono); color: var(--muted); }
+dl.stats .rank { grid-column: 1 / -1; }
+dl.stats .rank dt { color: var(--add); font-size: 40px; }
 .supported { display: flex; flex-direction: column; gap: 12px; }
 .supported ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .supported li { font: 400 14px var(--mono); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; display: flex; align-items: center; gap: 8px; }
@@ -205,7 +213,9 @@ export function countingPage({ id, login }) {
 export function sharePage({ card, pageUrl, image, justCounted, removed }) {
   const tools = cardTools(card);
   const split = splitText(card);
-  const text = `I shipped +${fmt(card.additions)} lines of code with ${headlineTool(card)} in ${card.year}${split ? ` (${split})` : ''}. How much did you?`;
+  const aiShare = card.totalCommits ? Math.max(1, Math.round((card.commits / card.totalCommits) * 100)) : null;
+  const text = `I shipped +${fmt(card.additions)} lines of code with ${headlineTool(card)} in ${card.year}${split ? ` (${split})` : ''}.${aiShare ? ` AI co-wrote ${aiShare}% of my commits.` : ''}${card.rank ? ` Top ${card.rank}% on Code Wrapped.` : ''} How much did you?`;
+  const stats = statColumns(card);
   const enc = encodeURIComponent;
   const x = `https://twitter.com/intent/tweet?text=${enc(text)}&url=${enc(pageUrl)}`;
   const li = `https://www.linkedin.com/sharing/share-offsite/?url=${enc(pageUrl)}`;
@@ -222,6 +232,11 @@ export function sharePage({ card, pageUrl, image, justCounted, removed }) {
 <figure>
   <img class="card-img" src="${esc(image)}" alt="Card: +${fmt(card.additions)} lines of code shipped with ${esc(headlineTool(card))} in ${card.year} by @${esc(card.login)}" width="1200" height="630">
 </figure>
+${empty || !(stats.length || card.rank) ? '' : `<dl class="stats">
+  ${card.rank ? `<div class="rank"><dt>Top ${card.rank}%</dt><dd>more lines than ${100 - card.rank}% of developers on Code Wrapped</dd></div>` : ''}
+  ${stats.map(([v, l]) => `<div><dt>${esc(v)}</dt><dd>${esc(l)}</dd></div>`).join('')}
+</dl>`}
+${card.bulkCommits ? `<p class="fine">${fmt(card.bulkCommits)} very large ${card.bulkCommits === 1 ? 'commit' : 'commits'} (over ${fmt(BULK_LINES)} lines added, usually lock files or generated code) ${card.bulkCommits === 1 ? 'is' : 'are'} counted as ${card.bulkCommits === 1 ? 'a commit' : 'commits'} but ${card.bulkCommits === 1 ? 'its' : 'their'} lines are left out.</p>` : ''}
 ${empty ? '' : `<table class="tools">
   <thead><tr><th>Tool</th><th>Commits</th><th>Lines added</th><th>Share</th></tr></thead>
   <tbody>${tools.map((t) => `<tr><td><i style="background:${esc(t.color)}"></i>${esc(t.name)}</td><td>${fmt(t.commits)}</td><td>+${fmt(t.additions)}</td><td>${Math.max(1, Math.round(t.share * 100))}%</td></tr>`).join('')}</tbody>

@@ -46,6 +46,7 @@ async function gh(token, url, opts = {}, attempt = 0) {
 }
 
 const day = 86400000;
+export const BULK_LINES = 20000;
 const iso = (t) => new Date(t).toISOString().slice(0, 10);
 
 async function searchRange(token, login, from, to, found, onProgress) {
@@ -92,16 +93,31 @@ export async function countYear({ token, login, year, onProgress }) {
     onProgress?.({ phase: 'stats', done: Math.min(i + 100, items.length), total: items.length });
   }
 
+  // All commits this year, AI or not, so we can say what share AI co-wrote.
+  const allQ = `author:${login} merge:false author-date:${iso(from)}..${iso(to)}`;
+  const totalCommits = (await gh(token, `/search/commits?q=${encodeURIComponent(allQ)}&per_page=1`)).total_count;
+
   const months = Array(12).fill(0);
   const repos = new Map();
   const tools = new Map();
+  const days = new Map();
   let additions = 0;
   let deletions = 0;
+  let bulkCommits = 0;
   for (const it of items) {
-    const s = stats.get(it.sha) || { additions: 0, deletions: 0 };
+    let s = stats.get(it.sha) || { additions: 0, deletions: 0 };
+    // Commits this big are almost always lock files, generated or vendored
+    // code. They still count as commits but their lines are left out.
+    if (s.additions > BULK_LINES) {
+      bulkCommits += 1;
+      s = { additions: 0, deletions: 0 };
+    }
     additions += s.additions;
     deletions += s.deletions;
-    months[new Date(it.commit.author.date).getUTCMonth()] += s.additions;
+    // The author date keeps the committer's own time zone, so slice the day from it.
+    const date = String(it.commit.author.date).slice(0, 10);
+    months[Number(date.slice(5, 7)) - 1] += s.additions;
+    days.set(date, (days.get(date) || 0) + s.additions);
     // A commit credited to two tools splits its lines between them.
     for (const id of it.tools) {
       const t = tools.get(id) || { id, name: toolById[id].name, commits: 0, additions: 0 };
@@ -114,6 +130,18 @@ export async function countYear({ token, login, year, onProgress }) {
     r.additions += s.additions;
     repos.set(name, r);
   }
+
+  const sortedDays = [...days.keys()].sort();
+  let longestStreak = 0;
+  let run = 0;
+  let prev = null;
+  for (const d of sortedDays) {
+    const t = Date.parse(`${d}T00:00:00Z`);
+    run = prev !== null && t - prev === day ? run + 1 : 1;
+    longestStreak = Math.max(longestStreak, run);
+    prev = t;
+  }
+  const best = [...days].sort((a, b) => b[1] - a[1])[0];
   // Private repo names never leave the server: only public ones can be shown.
   const topPublicRepo = [...repos.values()]
     .filter((r) => !r.private)
@@ -127,6 +155,11 @@ export async function countYear({ token, login, year, onProgress }) {
     repos: repos.size,
     months,
     tools: [...tools.values()].sort((a, b) => b.additions - a.additions || b.commits - a.commits),
+    totalCommits: Math.max(totalCommits, items.length),
+    activeDays: days.size,
+    longestStreak,
+    busiestDay: best && best[1] > 0 ? { date: best[0], additions: best[1] } : null,
+    bulkCommits,
     topPublicRepo,
   };
 }

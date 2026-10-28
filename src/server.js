@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import express from 'express';
 import { countYear, getUser } from './counter.js';
 import { renderCard } from './card.js';
-import { store } from './store.js';
+import { store, topPercent } from './store.js';
 import { headlineTool, splitText } from './tools.js';
 import { layout, landingPage, countingPage, sharePage, missingPage, privacyPage, privatePage } from './pages.js';
 
@@ -41,14 +41,17 @@ app.get('/privacy', (req, res) => {
 
 app.get('/u/:login', async (req, res) => {
   const year = Number(req.query.year) || thisYear();
-  const card = await store.get(req.params.login, year);
-  if (!card) {
+  const saved = await store.get(req.params.login, year);
+  if (!saved) {
     return res.status(404).send(layout({ title: 'Code Wrapped', baseUrl: BASE_URL, body: missingPage(req.params.login) }));
   }
+  const card = { ...saved, rank: await topPercent(saved).catch(() => null) };
   const pageUrl = `${BASE_URL}/u/${card.login}${year === thisYear() ? '' : `?year=${year}`}`;
-  const image = `${BASE_URL}/card/${card.login}/${year}.png?v=${Date.parse(card.updatedAt)}`;
+  // Rank in the image URL so previews refresh when the rank changes.
+  const image = `${BASE_URL}/card/${card.login}/${year}.png?v=${Date.parse(card.updatedAt)}-${card.rank || 0}`;
   const split = splitText(card);
-  const desc = `${card.commits.toLocaleString('en-US')} commits co-authored with ${headlineTool(card)} in ${year}${split ? `: ${split}` : ''}.`;
+  const share = card.totalCommits ? ` AI co-wrote ${Math.max(1, Math.round((card.commits / card.totalCommits) * 100))}% of commits.` : '';
+  const desc = `${card.commits.toLocaleString('en-US')} commits co-authored with ${headlineTool(card)} in ${year}${split ? `: ${split}` : ''}.${share}${card.rank ? ` Top ${card.rank}% on Code Wrapped.` : ''}`;
   res.send(
     layout({
       title: `@${card.login} shipped +${card.additions.toLocaleString('en-US')} lines with ${headlineTool(card)}`,
@@ -72,6 +75,8 @@ const EXAMPLE = {
     { id: 'kimi', name: 'Kimi', commits: 13, additions: 2860 },
   ],
   months: [1900, 3400, 2600, 5600, 7800, 6400, 9100, 12300, 10200, 28080, 0, 0],
+  totalCommits: 640, activeDays: 143, longestStreak: 21, busiestDay: { date: `${thisYear()}-03-14`, additions: 6200 },
+  rank: 6,
 };
 let examplePng;
 app.get('/card/example.png', async (req, res, next) => {
@@ -84,9 +89,10 @@ app.get('/card/example.png', async (req, res, next) => {
 const pngCache = new Map();
 app.get('/card/:login/:year.png', async (req, res, next) => {
   try {
-    const card = await store.get(req.params.login, Number(req.params.year));
-    if (!card) return res.sendStatus(404);
-    const key = `${card.login}:${card.year}:${card.updatedAt}`;
+    const saved = await store.get(req.params.login, Number(req.params.year));
+    if (!saved) return res.sendStatus(404);
+    const card = { ...saved, rank: await topPercent(saved).catch(() => null) };
+    const key = `${card.login}:${card.year}:${card.updatedAt}:${card.rank || 0}`;
     let png = pngCache.get(key);
     if (!png) {
       png = await renderCard(card, HOST);

@@ -34,6 +34,16 @@ if (process.env.DATABASE_URL) {
       const r = await pool.query(`select count(*)::int as users, coalesce(sum((data->>'additions')::bigint), 0)::bigint as lines from cards`);
       return { users: r.rows[0].users, lines: Number(r.rows[0].lines) };
     },
+    // How many people with lines this year counted more than `additions`.
+    async rank(year, additions) {
+      const r = await pool.query(
+        `select count(*) filter (where (data->>'additions')::bigint > $2)::int as above,
+                count(*)::int as total
+         from cards where year = $1 and (data->>'additions')::bigint > 0`,
+        [year, additions],
+      );
+      return r.rows[0];
+    },
   };
 } else {
   const { fileURLToPath } = await import('node:url');
@@ -54,7 +64,21 @@ if (process.env.DATABASE_URL) {
       const all = Object.values(load());
       return { users: all.length, lines: all.reduce((s, c) => s + c.additions, 0) };
     },
+    async rank(year, additions) {
+      const peers = Object.values(load()).filter((c) => c.year === year && c.additions > 0);
+      return { above: peers.filter((c) => c.additions > additions).length, total: peers.length };
+    },
   };
+}
+
+// "Top 6%" style rank, only once enough people have counted for it to mean something.
+export const MIN_RANKED = 50;
+export async function topPercent(card) {
+  if (!card.additions) return null;
+  const { above, total } = await impl.rank(card.year, card.additions);
+  if (total < MIN_RANKED) return null;
+  const pct = Math.max(1, Math.ceil(((above + 1) / total) * 100));
+  return pct <= 50 ? pct : null;
 }
 
 export const store = impl;

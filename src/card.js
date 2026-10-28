@@ -67,6 +67,21 @@ function toolSplit(card, width = 600) {
   );
 }
 
+// The four "Wrapped" stats. Cards saved before these existed show none.
+export function statColumns(card) {
+  const cols = [];
+  if (card.totalCommits) cols.push([`${Math.max(1, Math.round((card.commits / card.totalCommits) * 100))}%`, 'of my commits had AI']);
+  if (card.activeDays) cols.push([fmt(card.activeDays), card.activeDays === 1 ? 'active day' : 'active days']);
+  if (card.longestStreak) cols.push([`${card.longestStreak} ${card.longestStreak === 1 ? 'day' : 'days'}`, 'longest streak']);
+  if (card.busiestDay) cols.push([shortDate(card.busiestDay.date), `best day, +${fmt(card.busiestDay.additions)}`]);
+  return cols;
+}
+
+export function shortDate(iso) {
+  const [, m, d] = iso.split('-').map(Number);
+  return `${d} ${'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ')[m - 1]}`;
+}
+
 export async function renderCard(card, siteHost) {
   const avatar = card.avatarUrl ? await avatarData(card.avatarUrl) : null;
   const max = Math.max(...card.months, 1);
@@ -92,15 +107,30 @@ export async function renderCard(card, siteHost) {
           h('div', { fontSize: 22, color: C.muted, fontFamily: 'Mono' }, `@${card.login}`),
         ),
       ),
-      h('div', { fontFamily: 'Mono', fontSize: 22, color: C.muted, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 14px' }, `${card.year} Wrapped`),
+      h(
+        'div',
+        { gap: 12, alignItems: 'center' },
+        ...(card.rank
+          ? [h('div', { fontFamily: 'Mono', fontSize: 22, fontWeight: 700, color: C.bg, background: C.add, borderRadius: 8, padding: '8px 14px' }, `Top ${card.rank}%`)]
+          : []),
+        h('div', { fontFamily: 'Mono', fontSize: 22, color: C.muted, border: `1px solid ${C.line}`, borderRadius: 8, padding: '8px 14px' }, `${card.year} Wrapped`),
+      ),
     ),
     // Hero number
     h(
       'div',
-      { flexDirection: 'column', marginTop: 40 },
-      h('div', { fontSize: 168, fontWeight: 800, color: C.add, lineHeight: 1, letterSpacing: -6 }, `+${fmt(card.additions)}`),
-      h('div', { fontSize: 36, fontWeight: 400, marginTop: 14 }, `lines of code shipped with ${headlineTool(card)} in ${card.year}`),
+      { flexDirection: 'column', marginTop: 22 },
+      h('div', { fontSize: 140, fontWeight: 800, color: C.add, lineHeight: 1, letterSpacing: -5 }, `+${fmt(card.additions)}`),
+      h('div', { fontSize: 30, fontWeight: 400, marginTop: 8 }, `lines of code shipped with ${headlineTool(card)} in ${card.year}`),
     ),
+    // Wrapped-style stats
+    ...(statColumns(card).length
+      ? [h('div', { marginTop: 26, gap: 48 }, ...statColumns(card).map(([value, label]) =>
+          h('div', { flexDirection: 'column', gap: 2 },
+            h('div', { fontSize: 40, fontWeight: 700, lineHeight: 1.1 }, value),
+            h('div', { fontFamily: 'Mono', fontSize: 17, color: C.muted }, label)),
+        ))]
+      : []),
     // Footer: diffstat + monthly bars
     h(
       'div',
@@ -110,7 +140,7 @@ export async function renderCard(card, siteHost) {
         { flexDirection: 'column', gap: 14 },
         h(
           'div',
-          { fontFamily: 'Mono', fontSize: 24, gap: 22 },
+          { fontFamily: 'Mono', fontSize: 20, gap: 18 },
           h('div', {}, `${fmt(card.commits)} commits`),
           h('div', { color: C.muted }, '·'),
           h('div', {}, `${fmt(card.repos)} ${card.repos === 1 ? 'repo' : 'repos'}`),
