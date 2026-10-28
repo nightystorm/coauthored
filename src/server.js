@@ -12,8 +12,10 @@ const require = createRequire(import.meta.url);
 const PORT = Number(process.env.PORT || 3000);
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const HOST = new URL(BASE_URL).host;
-const CLIENT_ID = process.env.GITHUB_CLIENT_ID;
-const CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
+// Settings pasted into a dashboard often pick up spaces, line breaks or quotes.
+const setting = (name) => (process.env[name] || '').trim().replace(/^["']|["']$/g, '').trim();
+const CLIENT_ID = setting('GITHUB_CLIENT_ID');
+const CLIENT_SECRET = setting('GITHUB_CLIENT_SECRET');
 const thisYear = () => new Date().getUTCFullYear();
 
 const app = express();
@@ -100,9 +102,9 @@ app.get('/card/:login/:year.png', async (req, res, next) => {
 // - Public: plain sign-in. GitHub only confirms who the user is; no repo access.
 // - Private: the user installs the app with read-only Contents access on the
 //   repos they pick. After counting we delete the installation and the sign-in.
-const APP_ID = process.env.GITHUB_APP_ID;
-const APP_SLUG = process.env.GITHUB_APP_SLUG;
-const PRIVATE_KEY = (process.env.GITHUB_PRIVATE_KEY || '').replace(/\\n/g, '\n');
+const APP_ID = setting('GITHUB_APP_ID');
+const APP_SLUG = setting('GITHUB_APP_SLUG');
+const PRIVATE_KEY = setting('GITHUB_PRIVATE_KEY').replace(/\\n/g, '\n');
 const secure = BASE_URL.startsWith('https') ? '; Secure' : '';
 
 function startAuth(res) {
