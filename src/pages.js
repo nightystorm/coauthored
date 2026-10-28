@@ -145,9 +145,9 @@ const ERRORS = {
   signin: 'GitHub sign-in did not finish. Try again, and approve access on the GitHub page.',
 };
 
-export function landingPage({ totals, year, error }) {
+export function landingPage({ totals, year, error, detail }) {
   return `
-${error ? `<div class="notice err">${esc(ERRORS[error] || 'Something went wrong. Try again.')}</div>` : ''}
+${error ? `<div class="notice err">${esc(ERRORS[error] || 'Something went wrong. Try again.')}${detail ? `<br><span class="mono">GitHub said: ${esc(detail)}</span>` : ''}</div>` : ''}
 <section class="hero">
   <h1>How much code did you ship with <em>AI</em> in ${year}?</h1>
   <p class="lede">Sign in with GitHub. We add up every commit an AI tool co-authored, split it by tool, and turn it into a card you can post.</p>
@@ -189,7 +189,7 @@ export function countingPage({ id, login }) {
   function tick() {
     fetch('/api/jobs/${esc(id)}').then(function (r) { return r.json(); }).then(function (j) {
       if (j.status === 'done') { location.href = '/u/' + encodeURIComponent(j.login) + '?new=1' + (j.removed ? '&removed=1' : ''); return; }
-      if (j.status === 'error' || j.status === 'missing') { log.textContent = 'The count failed. Go back and sign in again.'; return; }
+      if (j.status === 'error' || j.status === 'missing') { log.textContent = 'The count failed' + (j.error ? ': ' + j.error : '.') + ' Go back and sign in again.'; return; }
       var p = j.progress || {};
       if (p.phase === 'search') { log.textContent = 'Found ' + (p.found || 0) + ' AI co-authored commits so far…'; bar.style.width = '30%'; }
       if (p.phase === 'cleanup') { log.textContent = 'Removing our access from your GitHub…'; bar.style.width = '100%'; }

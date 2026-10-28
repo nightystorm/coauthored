@@ -30,7 +30,7 @@ const cookie = (req, name) =>
 // ---------- pages ----------
 app.get('/', async (req, res) => {
   const totals = await store.stats().catch(() => ({ users: 0, lines: 0 }));
-  res.send(layout({ title: 'Code Wrapped', baseUrl: BASE_URL, body: landingPage({ totals, year: thisYear(), error: req.query.error }) }));
+  res.send(layout({ title: 'Code Wrapped', baseUrl: BASE_URL, body: landingPage({ totals, year: thisYear(), error: req.query.error, detail: req.query.detail }) }));
 });
 
 app.get('/privacy', (req, res) => {
@@ -135,18 +135,24 @@ const jobs = new Map();
 app.get('/auth/callback', async (req, res) => {
   const state = cookie(req, 'oauth_state');
   const installationId = req.query.installation_id ? Number(req.query.installation_id) : null;
-  // The install flow does not always pass state back, so only enforce it when present.
-  if (!req.query.code || (req.query.state && req.query.state !== state) || (!req.query.state && !installationId)) {
-    return res.redirect('/?error=signin');
-  }
+  const fail = (why, detail = '') => {
+    console.error('sign-in failed', why, detail);
+    res.redirect(`/?error=signin&why=${encodeURIComponent(why)}${detail ? `&detail=${encodeURIComponent(detail.slice(0, 160))}` : ''}`);
+  };
+  if (req.query.error) return fail('denied', req.query.error_description || req.query.error);
+  if (!req.query.code) return fail('nocode');
+  // Phones often finish GitHub sign-in in another browser or the GitHub app,
+  // where our cookie is missing. Only a cookie that disagrees is rejected.
+  if (state && req.query.state && req.query.state !== state) return fail('state');
   try {
     const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
       method: 'POST',
       headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: JSON.stringify({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, code: req.query.code, redirect_uri: `${BASE_URL}/auth/callback` }),
     });
-    const { access_token: token } = await tokenRes.json();
-    if (!token) return res.redirect('/?error=signin');
+    const tokenJson = await tokenRes.json();
+    const token = tokenJson.access_token;
+    if (!token) return fail('token', tokenJson.error_description || tokenJson.error || `HTTP ${tokenRes.status}`);
 
     const user = await getUser(token);
     const id = crypto.randomBytes(12).toString('hex');
@@ -156,8 +162,7 @@ app.get('/auth/callback', async (req, res) => {
     res.setHeader('Set-Cookie', 'oauth_state=; Path=/; Max-Age=0');
     res.redirect(`/counting/${id}`);
   } catch (e) {
-    console.error('callback failed', e);
-    res.redirect('/?error=signin');
+    fail('exception', e.message);
   }
 });
 
@@ -176,6 +181,7 @@ async function runJob(job, token, user, installationId) {
     job.ok = true;
   } catch (e) {
     console.error('count failed', user.login, e);
+    job.error = String(e.message || e).slice(0, 300);
   } finally {
     job.progress = { phase: 'cleanup' };
     await revokeSignIn(token);
@@ -234,7 +240,7 @@ app.get('/counting/:id', (req, res) => {
 app.get('/api/jobs/:id', (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ status: 'missing' });
-  res.json({ status: job.status, login: job.login, progress: job.progress, removed: job.removed });
+  res.json({ status: job.status, login: job.login, progress: job.progress, removed: job.removed, error: job.error });
 });
 
 // ---------- misc ----------

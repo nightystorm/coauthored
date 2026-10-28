@@ -19,7 +19,11 @@ async function gh(token, url, opts = {}, attempt = 0) {
     },
   });
   // Search allows 30 requests a minute; wait and retry when we hit it.
-  if ((res.status === 403 || res.status === 429) && attempt < 4) {
+  // Other 403s (no permission, blocked app) fail straight away.
+  const limited =
+    res.status === 429 ||
+    (res.status === 403 && (res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after')));
+  if (limited && attempt < 4) {
     const retryAfter = Number(res.headers.get('retry-after'));
     const reset = Number(res.headers.get('x-ratelimit-reset'));
     const wait = retryAfter
@@ -32,9 +36,13 @@ async function gh(token, url, opts = {}, attempt = 0) {
   }
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`GitHub ${res.status}: ${body.slice(0, 200)}`);
+    let message = body.slice(0, 200);
+    try { message = JSON.parse(body).message || message; } catch {}
+    throw new Error(`GitHub said ${res.status}: ${message}`);
   }
-  return res.json();
+  const json = await res.json();
+  if (json.errors && !json.data) throw new Error(`GitHub said: ${json.errors[0]?.message || 'query failed'}`);
+  return json;
 }
 
 const day = 86400000;
