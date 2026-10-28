@@ -6,6 +6,7 @@ import express from 'express';
 import { countGitHub, getUser } from './counter.js';
 import { aggregate } from './aggregate.js';
 import { cleanRows } from './paste.js';
+import { GITLAB, countGitLab, getGitLabUser, revokeGitLab } from './gitlab.js';
 import { TOOLS } from './tools.js';
 import { renderCard } from './card.js';
 import { store, topPercent } from './store.js';
@@ -72,7 +73,7 @@ app.get('/u/:login', async (req, res) => {
   const desc = `${card.commits.toLocaleString('en-US')} commits co-authored with ${headlineTool(card)} in ${year}${split ? `: ${split}` : ''}.${share}${card.rank ? ` Top ${card.rank}% on Code Wrapped.` : ''}`;
   res.send(
     layout({
-      title: `@${card.login} shipped +${card.additions.toLocaleString('en-US')} lines with ${headlineTool(card)}`,
+      title: `@${card.handle || card.login} shipped +${card.additions.toLocaleString('en-US')} lines with ${headlineTool(card)}`,
       description: desc,
       image,
       url: pageUrl,
@@ -289,6 +290,85 @@ async function runJob(job, token, user, installationId) {
   }
 }
 
+// ---------- GitLab (gitlab.com) ----------
+// Hidden until GITLAB_CLIENT_ID and GITLAB_CLIENT_SECRET are set.
+const GL_ID = setting('GITLAB_CLIENT_ID');
+const GL_SECRET = setting('GITLAB_CLIENT_SECRET');
+const GL_CALLBACK = `${BASE_URL}/auth/gitlab/callback`;
+
+app.get('/login/gitlab', (req, res) => {
+  if (!GL_ID || !GL_SECRET) return res.redirect('/');
+  // ".a" = add GitLab to the card this browser already owns.
+  const state = crypto.randomBytes(16).toString('hex') + (req.query.add === '1' ? '.a' : '');
+  res.setHeader('Set-Cookie', `gl_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=900${secure}`);
+  const params = new URLSearchParams({ client_id: GL_ID, redirect_uri: GL_CALLBACK, response_type: 'code', state, scope: 'read_api read_user' });
+  res.redirect(`${GITLAB}/oauth/authorize?${params}`);
+});
+
+app.get('/auth/gitlab/callback', async (req, res) => {
+  const fail = (why, detail = '') => {
+    noteFailure(`gitlab: ${why}`, detail);
+    res.redirect(`/?error=gitlab${detail ? `&detail=${encodeURIComponent(String(detail).slice(0, 160))}` : ''}`);
+  };
+  if (req.query.error) return fail('denied', req.query.error_description || req.query.error);
+  if (!req.query.code) return fail('nocode');
+  const saved = cookie(req, 'gl_state');
+  if (saved && req.query.state && saved !== req.query.state) return fail('state');
+  try {
+    const tokenRes = await fetch(`${GITLAB}/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: new URLSearchParams({ client_id: GL_ID, client_secret: GL_SECRET, code: req.query.code, grant_type: 'authorization_code', redirect_uri: GL_CALLBACK }),
+    });
+    const tokenJson = await tokenRes.json();
+    const token = tokenJson.access_token;
+    if (!token) return fail('token', tokenJson.error_description || tokenJson.error || `HTTP ${tokenRes.status}`);
+    const user = await getGitLabUser(token);
+
+    // Adding to an existing card, or a GitLab-only card of its own.
+    const owned = String(req.query.state || '').endsWith('.a') ? await ownedCard(req) : null;
+    const cardId = owned ? owned.login : `gl~${user.username.toLowerCase()}`;
+    const cookies = ['gl_state=; Path=/; Max-Age=0'];
+    let editKeyHash = null;
+    if (!owned) {
+      const editKey = crypto.randomBytes(24).toString('base64url');
+      editKeyHash = hashKey(editKey);
+      cookies.push(editCookie(cardId, editKey));
+    }
+    const id = crypto.randomBytes(12).toString('hex');
+    const job = { status: 'running', login: cardId, display: owned ? owned.handle || owned.login : user.username, progress: { phase: 'gitlab', done: 0, total: 0 }, startedAt: Date.now() };
+    jobs.set(id, job);
+    (async () => {
+      try {
+        const year = thisYear();
+        const { source, unknownTags } = await countGitLab({ token, user, year, onProgress: (p) => (job.progress = p) });
+        for (const tag of unknownTags) unknownTagCounts.set(tag, (unknownTagCounts.get(tag) || 0) + 1);
+        source.updatedAt = new Date().toISOString();
+        await store.putSource(cardId, year, source);
+        job.progress = { phase: 'card' };
+        await rebuildCard(cardId, year, {
+          profile: owned ? null : { name: user.name, avatarUrl: user.avatar_url, handle: user.username },
+          addEditKeyHash: editKeyHash,
+        });
+        job.ok = true;
+      } catch (e) {
+        console.error('gitlab count failed', e);
+        job.error = String(e.message || e).slice(0, 300);
+        noteFailure('gitlab count', job.error);
+      } finally {
+        job.progress = { phase: 'cleanup' };
+        await revokeGitLab(token, GL_ID, GL_SECRET);
+        job.status = job.ok ? 'done' : 'error';
+        setTimeout(() => jobs.delete(id), 10 * 60 * 1000);
+      }
+    })();
+    res.setHeader('Set-Cookie', cookies);
+    res.redirect(`/counting/${id}`);
+  } catch (e) {
+    fail('exception', e.message);
+  }
+});
+
 // ---------- cards built from sources ----------
 
 // Recomputes a card from all its sources, saves it and draws its image.
@@ -300,6 +380,7 @@ async function rebuildCard(cardId, year, { profile, addEditKeyHash } = {}) {
   if (addEditKeyHash) editKeys = [addEditKeyHash, ...editKeys.filter((k) => k !== addEditKeyHash)].slice(0, 5);
   const card = {
     login: existing.login || cardId,
+    handle: profile?.handle ?? existing.handle ?? null,
     name: profile?.name ?? existing.name ?? null,
     avatarUrl: profile?.avatarUrl ?? existing.avatarUrl ?? null,
     year,
@@ -418,7 +499,7 @@ async function revokeSignIn(token) {
 app.get('/counting/:id', (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.redirect('/');
-  res.send(layout({ title: 'Counting · Code Wrapped', baseUrl: BASE_URL, body: countingPage({ id: req.params.id, login: job.login }) }));
+  res.send(layout({ title: 'Counting · Code Wrapped', baseUrl: BASE_URL, body: countingPage({ id: req.params.id, login: job.display || job.login }) }));
 });
 
 app.get('/api/jobs/:id', (req, res) => {
@@ -462,6 +543,7 @@ app.get('/healthz/github', async (req, res) => {
     `private key: ${key}`,
     `base url: ${BASE_URL}`,
     `accounts with the app installed right now: ${installs}`,
+    `gitlab sign-in: ${GL_ID && GL_SECRET ? `on (client id starts ${GL_ID.slice(0, 6)}, secret ${GL_SECRET.length} characters)` : 'off (GITLAB_CLIENT_ID / GITLAB_CLIENT_SECRET not set)'}`,
     '',
     `recent failures (newest first, since last restart): ${failures.length ? '' : 'none'}`,
     ...failures.map((f) => `  ${f.at}  ${f.what}  ${f.detail}  ${JSON.stringify(f.ctx)}`),

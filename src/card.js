@@ -104,7 +104,7 @@ export async function renderCard(card, siteHost) {
           'div',
           { flexDirection: 'column' },
           h('div', { fontSize: 34, fontWeight: 700 }, card.name || card.login),
-          h('div', { fontSize: 22, color: C.muted, fontFamily: 'Mono' }, `@${card.login}`),
+          h('div', { fontSize: 22, color: C.muted, fontFamily: 'Mono' }, `@${card.handle || card.login}`),
         ),
       ),
       h(

@@ -55,7 +55,8 @@ export function aggregate(sources) {
     }
     const kind = row.source.kind === 'paste' ? 'self' : row.private ? 'private' : 'public';
     const key = `${kind}:${row.repoKey}`;
-    const r = repos.get(key) || { kind, name: kind === 'public' ? row.repo : null, commits: 0, additions: 0 };
+    const url = kind === 'public' ? row.repoUrl || `https://github.com/${row.repo}` : null;
+    const r = repos.get(key) || { kind, name: kind === 'public' ? row.repo : null, url, commits: 0, additions: 0 };
     r.commits += 1;
     r.additions += add;
     repos.set(key, r);
@@ -82,7 +83,7 @@ export function aggregate(sources) {
     additions: list.reduce((s, r) => s + r.additions, 0),
   };
   const repoList = [
-    ...pub.slice(0, 10).map(({ name, commits, additions: a }) => ({ name, commits, additions: a })),
+    ...pub.slice(0, 10).map(({ name, url, commits, additions: a }) => ({ name, url, commits, additions: a })),
     group(pub.slice(10), 'public'),
     group(all.filter((r) => r.kind === 'private'), 'private'),
     group(all.filter((r) => r.kind === 'self'), 'self'),

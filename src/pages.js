@@ -10,6 +10,7 @@ const fmt = (n) => Number(n).toLocaleString('en-US');
 const ADSENSE = process.env.ADSENSE_CLIENT;
 const DEV = process.env.NODE_ENV !== 'production';
 const BOOT = Date.now(); // cache-busts the page scripts on every deploy
+const GITLAB_ON = Boolean(process.env.GITLAB_CLIENT_ID && process.env.GITLAB_CLIENT_SECRET);
 const REPO_URL = process.env.REPO_URL;
 
 // One ad unit. Shows a dashed placeholder locally and nothing in production
@@ -171,6 +172,7 @@ ${body}
 const ERRORS = {
   signin: 'GitHub sign-in did not finish. Try again, and approve access on the GitHub page.',
   owner: 'To add more to your card, first count your GitHub on this device. That proves the card is yours.',
+  gitlab: 'GitLab sign-in did not finish. Try again, and approve access on the GitLab page.',
 };
 
 export function landingPage({ totals, year, error, detail }) {
@@ -182,6 +184,7 @@ ${error ? `<div class="notice err">${esc(ERRORS[error] || 'Something went wrong.
   <div class="actions">
     <a class="btn primary" href="/login">${GH_ICON} Count my public repos</a>
     <a class="btn" href="/private">Include private repos</a>
+    ${GITLAB_ON ? '<a class="btn" href="/login/gitlab">Count my GitLab</a>' : ''}
   </div>
   <p class="fine">Public repos need no access at all. For private repos you get read-only access you can limit to chosen repos, and we remove it the moment your card is ready.</p>
   ${totals.users > 0 ? `<p class="totals"><b>${fmt(totals.users)}</b> developers have counted <b>+${fmt(totals.lines)}</b> lines so far</p>` : ''}
@@ -221,6 +224,7 @@ export function countingPage({ id, login }) {
       if (j.status === 'error' || j.status === 'missing') { log.textContent = 'The count failed' + (j.error ? ': ' + j.error : '.') + ' Go back and sign in again.'; return; }
       var p = j.progress || {};
       if (p.phase === 'search') { log.textContent = 'Found ' + (p.found || 0) + ' AI co-authored commits so far…'; bar.style.width = '30%'; }
+      if (p.phase === 'gitlab') { log.textContent = p.total ? 'Reading GitLab project ' + (p.done + 1) + ' of ' + p.total + ', ' + (p.found || 0) + ' AI commits so far…' : 'Finding your GitLab projects…'; bar.style.width = (10 + 80 * (p.total ? p.done / p.total : 0)) + '%'; }
       if (p.phase === 'card') { log.textContent = 'Drawing your card…'; bar.style.width = '95%'; }
       if (p.phase === 'cleanup') { log.textContent = 'Removing our access from your GitHub…'; bar.style.width = '100%'; }
       if (p.phase === 'stats') { log.textContent = 'Adding up lines: ' + p.done + ' of ' + p.total + ' commits'; bar.style.width = (30 + 70 * p.done / Math.max(p.total, 1)) + '%'; }
@@ -250,7 +254,8 @@ function ownerPanel(card) {
   <p class="fine">Count work that isn't on GitHub: company GitLab, Bitbucket, or any repo on your computer. Commits found in two places are counted once.</p>
   <div class="actions">
     <a class="btn primary" href="/add/paste">+ Add a repo from git log</a>
-    <a class="btn" href="${card.includesPrivate ? '/private' : '/login'}">Count GitHub again</a>
+    ${GITLAB_ON && !(card.sources || []).some((s) => s.kind === 'gitlab') ? '<a class="btn" href="/login/gitlab?add=1">+ Add GitLab</a>' : ''}
+    ${(card.sources || [{ kind: 'github' }]).some((s) => s.kind === 'github') ? `<a class="btn" href="${card.includesPrivate ? '/private' : '/login'}">Count GitHub again</a>` : ''}
   </div>
   ${extra.length ? `<ul class="sources">${extra.map((s) => `<li><span><b>${esc(s.label)}</b> <span class="fine">${s.kind === 'paste' ? 'pasted' : esc(s.kind)}, ${fmt(s.commits)} AI ${s.commits === 1 ? 'commit' : 'commits'}</span></span>
     <form method="post" action="/api/sources/remove"><input type="hidden" name="key" value="${esc(s.key)}"><button class="link" type="submit">Remove</button></form></li>`).join('')}</ul>` : ''}
@@ -272,14 +277,14 @@ export function sharePage({ card, pageUrl, image, justCounted, removed, added, o
 <section class="hero">
   ${justCounted ? `<p class="mono" style="color:var(--add)">Done. This is your card.${removed ? ' Code Wrapped has been removed from your GitHub account.' : ''}</p>` : ''}
   ${added ? '<p class="mono" style="color:var(--add)">Repo added. Your card is updated.</p>' : ''}
-  <h1>${empty ? `No AI co-authored commits found for @${esc(card.login)} yet` : `@${esc(card.login)} shipped <em>+${fmt(card.additions)}</em> lines with ${esc(headlineTool(card))}`}</h1>
+  <h1>${empty ? `No AI co-authored commits found for @${esc(card.handle || card.login)} yet` : `@${esc(card.handle || card.login)} shipped <em>+${fmt(card.additions)}</em> lines with ${esc(headlineTool(card))}`}</h1>
   <p class="lede">${empty
     ? `We looked for commits in ${card.year} that you authored with an AI tool in a <code>Co-authored-by</code> line.${card.includesPrivate ? '' : ' Only public repos were counted.'}`
     : `${fmt(card.commits)} commits across ${fmt(card.repos)} ${card.repos === 1 ? 'repo' : 'repos'} in ${card.year}, ${fmt(card.deletions)} lines deleted along the way. Counted from ${esc(sourcesText(card))}.`}</p>
 </section>
 ${owner ? ownerPanel(card) : ''}
 <figure>
-  <img class="card-img" src="${esc(image)}" alt="Card: +${fmt(card.additions)} lines of code shipped with ${esc(headlineTool(card))} in ${card.year} by @${esc(card.login)}" width="1200" height="630">
+  <img class="card-img" src="${esc(image)}" alt="Card: +${fmt(card.additions)} lines of code shipped with ${esc(headlineTool(card))} in ${card.year} by @${esc(card.handle || card.login)}" width="1200" height="630">
 </figure>
 ${empty || !(stats.length || card.rank) ? '' : `<dl class="stats">
   ${card.rank ? `<div class="rank"><dt>Top ${card.rank}%</dt><dd>more lines than ${100 - card.rank}% of developers on Code Wrapped</dd></div>` : ''}
@@ -300,7 +305,7 @@ ${empty || !card.repoList?.length ? '' : `<table class="tools repos">
         ? `${fmt(r.repos)} pasted ${r.repos === 1 ? 'repo' : 'repos'} (self-counted)`
       : r.group === 'public'
         ? `${fmt(r.repos)} more public ${r.repos === 1 ? 'repo' : 'repos'}`
-        : `<a href="https://github.com/${esc(r.name)}" target="_blank" rel="noopener">${esc(r.name)}</a>`;
+        : `<a href="${esc(r.url || `https://github.com/${r.name}`)}" target="_blank" rel="noopener">${esc(r.name)}</a>`;
     const share = card.additions ? Math.max(r.additions ? 1 : 0, Math.round((r.additions / card.additions) * 100)) : 0;
     return `<tr><td>${label}</td><td>${fmt(r.commits)}</td><td>+${fmt(r.additions)}</td><td>${share}%</td></tr>`;
   }).join('')}</tbody>
@@ -352,6 +357,8 @@ export function privacyPage(contact) {
   <p>When you sign in with GitHub, we use the access GitHub gives us to search for commits you authored this year whose <code>Co-authored-by</code> lines name an AI tool, and to read how many lines each one added and deleted.</p>
   <p>We keep only the totals shown on your card: your GitHub username, display name, avatar link, commit count, lines added and deleted, number of repos and lines per month. We never store your code, commit messages or private repo names.</p>
   <p>For public repos, signing in only tells us who you are. GitHub gives us no access to your repositories.</p>
+  <p>With GitLab (gitlab.com), you grant read-only access so we can read this year's commits in your projects. We revoke that access as soon as the count finishes, and private project names are never stored.</p>
+  <p>When you add a repo by pasting a git log, your paste is read in your browser. Only each AI commit's id, date, line counts and tool are sent to us.</p>
   <p>For private repos, you install our GitHub App with read-only access to the repositories you choose. It cannot change anything. As soon as the count finishes we uninstall the app from your account and revoke the sign-in, so nothing stays connected. We never keep your access token.</p>
   <p>Your card page is public, so anyone with the link can see it. To have it removed${contact ? `, email <a href="mailto:${esc(contact)}">${esc(contact)}</a> and we will delete it` : ', contact us and we will delete it'}.</p>
   <p>This site shows ads served by Google. Google may use cookies to show ads based on your visits to this and other sites. You can manage this in <a href="https://adssettings.google.com" target="_blank" rel="noopener">Google Ad Settings</a>.</p>
