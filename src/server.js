@@ -320,7 +320,18 @@ app.get('/robots.txt', (req, res) => res.type('text').send(`User-agent: *\nAllow
 app.get('/healthz', (req, res) => res.type('text').send(process.env.DATABASE_URL ? 'ok postgres' : 'ok file'));
 
 // Says whether each GitHub setting looks right, without revealing any value.
-app.get('/healthz/github', (req, res) => {
+app.get('/healthz/github', async (req, res) => {
+  // Number of accounts that still have the app installed. Should be 0 except
+  // while someone's private count is running (the app uninstalls itself after).
+  let installs = 'unknown';
+  try {
+    const r = await fetch('https://api.github.com/app/installations?per_page=100', {
+      headers: { Authorization: `Bearer ${appJwt()}`, Accept: 'application/vnd.github+json', 'User-Agent': 'codewrapped-app' },
+    });
+    installs = r.ok ? String((await r.json()).length) : `error ${r.status}`;
+  } catch (e) {
+    installs = `error: ${e.message}`;
+  }
   let key = 'missing';
   if (PRIVATE_KEY) {
     try { crypto.createPrivateKey(PRIVATE_KEY); key = 'valid'; } catch { key = 'set but not a valid key'; }
@@ -334,6 +345,7 @@ app.get('/healthz/github', (req, res) => {
     `app slug: ${APP_SLUG || 'missing'}`,
     `private key: ${key}`,
     `base url: ${BASE_URL}`,
+    `accounts with the app installed right now: ${installs}`,
   ].join('\n'));
 });
 
