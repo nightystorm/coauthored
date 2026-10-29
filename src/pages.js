@@ -257,7 +257,7 @@ function ownerPanel(card) {
     ${GITLAB_ON && !(card.sources || []).some((s) => s.kind === 'gitlab') ? '<a class="btn" href="/login/gitlab?add=1">+ Add GitLab</a>' : ''}
     ${(card.sources || [{ kind: 'github' }]).some((s) => s.kind === 'github') ? `<a class="btn" href="${card.includesPrivate ? '/private' : '/login'}">Count GitHub again</a>` : ''}
   </div>
-  ${extra.length ? `<ul class="sources">${extra.map((s) => `<li><span><b>${esc(s.label)}</b> <span class="fine">${s.kind === 'paste' ? 'pasted' : esc(s.kind)}, ${fmt(s.commits)} AI ${s.commits === 1 ? 'commit' : 'commits'}</span></span>
+  ${extra.length ? `<ul class="sources">${extra.map((s) => `<li><span><b>${esc(s.label)}</b> <span class="fine">${s.kind === 'paste' ? 'pasted' : s.kind === 'gitlab' ? 'gitlab.com' : esc(s.kind)}, ${fmt(s.commits)} AI ${s.commits === 1 ? 'commit' : 'commits'}</span></span>
     <form method="post" action="/api/sources/remove"><input type="hidden" name="key" value="${esc(s.key)}"><button class="link" type="submit">Remove</button></form></li>`).join('')}</ul>` : ''}
 </section>`;
 }
