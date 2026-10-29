@@ -168,15 +168,18 @@ function signInUrl(state) {
   return `https://github.com/login/oauth/authorize?${params}`;
 }
 
-app.get('/login', (req, res) => {
+// Every "Count" button starts on the explanation page, where private repos
+// are the default and public-only is offered as a link.
+app.get('/login', (req, res) => res.redirect('/private'));
+
+app.get('/login/public', (req, res) => {
   if (!CLIENT_ID) return res.status(500).send('GITHUB_CLIENT_ID is not set.');
-  if (req.query.private === '1') return res.redirect('/private');
   res.redirect(signInUrl(startAuth(res)));
 });
 
 // Explains exactly what GitHub will ask before sending the user there.
 app.get('/private', (req, res) => {
-  res.send(layout({ title: 'Include private repos · Code Wrapped', baseUrl: BASE_URL, body: privatePage({ repoUrl: process.env.REPO_URL }) }));
+  res.send(layout({ title: 'Count your commits · Code Wrapped', baseUrl: BASE_URL, body: privatePage({ repoUrl: process.env.REPO_URL }) }));
 });
 
 // Private flow signs in first. The callback then reuses an existing install

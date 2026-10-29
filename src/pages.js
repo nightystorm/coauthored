@@ -163,7 +163,7 @@ ${ADSENSE ? `<script async src="https://pagead2.googlesyndication.com/pagead/js/
 <div class="wrap">
 <header class="top"><a class="mark" href="/"><b>+</b>codewrapped</a><a href="/privacy">Privacy</a></header>
 ${body}
-<footer><span>Not affiliated with Anthropic or GitHub.</span><span class="links">${REPO_URL ? `<a href="${esc(REPO_URL)}" target="_blank" rel="noopener">Read the code</a>` : ''}<a href="/privacy">How we handle your data</a></span></footer>
+<footer><span>Not affiliated with Anthropic or GitHub.</span><span class="links">${REPO_URL ? `<a href="${esc(REPO_URL)}" target="_blank" rel="noopener">Open source: read the code</a>` : ''}<a href="/privacy">How we handle your data</a></span></footer>
 </div>
 </body>
 </html>`;
@@ -182,11 +182,10 @@ ${error ? `<div class="notice err">${esc(ERRORS[error] || 'Something went wrong.
   <h1>How much code did you ship with <em>AI</em> in ${year}?</h1>
   <p class="lede">Sign in with GitHub. We add up every commit an AI tool co-authored, split it by tool, and turn it into a card you can post.</p>
   <div class="actions">
-    <a class="btn primary" href="/login">${GH_ICON} Count my public repos</a>
-    <a class="btn" href="/private">Include private repos</a>
+    <a class="btn primary" href="/private">${GH_ICON} Count my commits</a>
     ${GITLAB_ON ? '<a class="btn" href="/login/gitlab">Count my GitLab</a>' : ''}
   </div>
-  <p class="fine">Public repos need no access at all. For private repos you get read-only access you can limit to chosen repos, and we remove it the moment your card is ready.</p>
+  <p class="fine">Read-only access, removed the moment your card is ready. We show you exactly what GitHub will ask before you go there.</p>
   ${totals.users > 0 ? `<p class="totals"><b>${fmt(totals.users)}</b> developers have counted <b>+${fmt(totals.lines)}</b> lines so far</p>` : ''}
 </section>
 <figure>
@@ -195,7 +194,7 @@ ${error ? `<div class="notice err">${esc(ERRORS[error] || 'Something went wrong.
 </figure>
 ${ad('ADSENSE_SLOT_HOME')}
 <ol class="steps">
-  <li><b>Sign in</b><span>One click with GitHub. Public repos need no repo access at all.</span></li>
+  <li><b>Sign in</b><span>With GitHub, read-only. We remove our access as soon as your card is ready.</span></li>
   <li><b>We count</b><span>Commits you authored this year with an AI tool as co-author, merges left out.</span></li>
   <li><b>Share</b><span>Post your link on X, LinkedIn or WhatsApp. The card shows up as the preview.</span></li>
 </ol>
@@ -369,8 +368,8 @@ export function privacyPage(contact) {
 export function privatePage({ repoUrl }) {
   return `
 <section class="hero">
-  <h1>Include private repos</h1>
-  <p class="lede">GitHub will ask you to install Code Wrapped. Here is exactly what that screen means before you see it.</p>
+  <h1>Count your commits</h1>
+  <p class="lede">Most code lives in private repos, so we count those too. GitHub will ask you to install Code Wrapped. Here is exactly what that screen means before you see it.</p>
 </section>
 <section class="perm">
   <h3>What GitHub will ask for</h3>
@@ -387,9 +386,9 @@ export function privatePage({ repoUrl }) {
 </section>
 <div class="actions">
   <a class="btn primary" href="/login/private">${GH_ICON} Continue to GitHub</a>
-  <a class="btn" href="/login">Public repos only</a>
-  ${repoUrl ? `<a class="btn" href="${esc(repoUrl)}" target="_blank" rel="noopener">Read the code</a>` : ''}
-</div>`;
+</div>
+<p class="fine">Rather not? <a href="/login/public">Count only public repos</a>. That needs no access to your repos at all.</p>
+${repoUrl ? `<p class="fine">Code Wrapped is open source, so you can check every line of this yourself: <a href="${esc(repoUrl)}" target="_blank" rel="noopener">read the code</a>.</p>` : ''}`;
 }
 
 export function pastePage({ card, year }) {
