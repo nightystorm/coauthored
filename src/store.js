@@ -76,6 +76,13 @@ if (process.env.DATABASE_URL) {
     async deleteSource(cardId, year, key) {
       await pool.query('delete from card_sources where card_id = $1 and year = $2 and key = $3', [cardId.toLowerCase(), year, key]);
     },
+    // Removes the card, its sources and its images, for every year.
+    async deleteCard(cardId) {
+      const id = cardId.toLowerCase();
+      await pool.query('delete from cards where login = $1', [id]);
+      await pool.query('delete from card_sources where card_id = $1', [id]);
+      await pool.query('delete from card_images where login = $1', [id]);
+    },
     async getImage(key) {
       const r = await pool.query('select png from card_images where key = $1', [key]);
       return r.rows[0]?.png || null;
@@ -131,6 +138,17 @@ if (process.env.DATABASE_URL) {
       const all = loadSources();
       if (all[key(cardId, year)]) delete all[key(cardId, year)][k];
       fs.writeFileSync(sourcesFile, JSON.stringify(all));
+    },
+    async deleteCard(cardId) {
+      const id = cardId.toLowerCase();
+      const cards = load();
+      const sources = loadSources();
+      for (const k of Object.keys(cards)) if (k.startsWith(`${id}:`)) delete cards[k];
+      for (const k of Object.keys(sources)) if (k.startsWith(`${id}:`)) delete sources[k];
+      fs.writeFileSync(file, JSON.stringify(cards, null, 2));
+      fs.writeFileSync(sourcesFile, JSON.stringify(sources));
+      const prefix = encodeURIComponent(`${id}:`);
+      for (const f of fs.readdirSync(imgDir)) if (f.startsWith(prefix)) fs.rmSync(path.join(imgDir, f));
     },
     async getImage(key) {
       try { return fs.readFileSync(path.join(imgDir, `${encodeURIComponent(key)}.png`)); } catch { return null; }

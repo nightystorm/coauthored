@@ -175,8 +175,9 @@ const ERRORS = {
   gitlab: 'GitLab sign-in did not finish. Try again, and approve access on the GitLab page.',
 };
 
-export function landingPage({ totals, year, error, detail }) {
+export function landingPage({ totals, year, error, detail, deleted }) {
   return `
+${deleted ? '<div class="notice">Your card has been deleted.</div>' : ''}
 ${error ? `<div class="notice err">${esc(ERRORS[error] || 'Something went wrong. Try again.')}${detail ? `<br><span class="mono">GitHub said: ${esc(detail)}</span>` : ''}</div>` : ''}
 <section class="hero">
   <h1>How much code did you ship with <em>AI</em> in ${year}?</h1>
@@ -258,7 +259,21 @@ function ownerPanel(card) {
   </div>
   ${extra.length ? `<ul class="sources">${extra.map((s) => `<li><span><b>${esc(s.label)}</b> <span class="fine">${s.kind === 'paste' ? 'pasted' : s.kind === 'gitlab' ? 'gitlab.com' : esc(s.kind)}, ${fmt(s.commits)} AI ${s.commits === 1 ? 'commit' : 'commits'}</span></span>
     <form method="post" action="/api/sources/remove"><input type="hidden" name="key" value="${esc(s.key)}"><button class="link" type="submit">Remove</button></form></li>`).join('')}</ul>` : ''}
+  <p class="fine"><a href="/delete">Delete my card</a></p>
 </section>`;
+}
+
+export function deletePage(card) {
+  return `
+<section class="hero">
+  <h1>Delete your card?</h1>
+  <p class="lede">This removes @${esc(card.handle || card.login)}'s card, its image and everything counted for it, including pasted repos. The link will stop working.</p>
+  <p class="fine">You can make a new card any time by counting again.</p>
+</section>
+<form method="post" action="/api/card/delete" class="actions">
+  <button class="btn primary" type="submit">Yes, delete my card</button>
+  <a class="btn" href="/u/${esc(card.login)}">Cancel</a>
+</form>`;
 }
 
 export function sharePage({ card, pageUrl, image, justCounted, removed, added, owner }) {
@@ -359,7 +374,7 @@ export function privacyPage(contact) {
   <p>With GitLab (gitlab.com), you grant read-only access so we can read this year's commits in your projects. We revoke that access as soon as the count finishes, and private project names are never stored.</p>
   <p>When you add a repo by pasting a git log, your paste is read in your browser. Only each AI commit's id, date, line counts and tool are sent to us.</p>
   <p>For private repos, you install our GitHub App with read-only access to the repositories you choose. It cannot change anything. As soon as the count finishes we uninstall the app from your account and revoke the sign-in, so nothing stays connected. We never keep your access token.</p>
-  <p>Your card page is public, so anyone with the link can see it. To have it removed${contact ? `, email <a href="mailto:${esc(contact)}">${esc(contact)}</a> and we will delete it` : ', contact us and we will delete it'}.</p>
+  <p>Your card page is public, so anyone with the link can see it. You can delete it yourself with "Delete my card" on your card page, from the browser you counted with. That removes the card and everything counted for it.${contact ? ` If you can't, email <a href="mailto:${esc(contact)}">${esc(contact)}</a> and we will delete it.` : ''}</p>
   <p>This site shows ads served by Google. Google may use cookies to show ads based on your visits to this and other sites. You can manage this in <a href="https://adssettings.google.com" target="_blank" rel="noopener">Google Ad Settings</a>.</p>
   <p>Code Wrapped is not affiliated with Anthropic or GitHub.</p>
 </section>`;

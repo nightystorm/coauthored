@@ -12,7 +12,7 @@ import { renderCard } from './card.js';
 import { store, topPercent } from './store.js';
 import { rateLimit } from './ratelimit.js';
 import { headlineTool, splitText } from './tools.js';
-import { layout, landingPage, countingPage, sharePage, missingPage, privacyPage, privatePage, pastePage } from './pages.js';
+import { layout, landingPage, countingPage, sharePage, missingPage, privacyPage, privatePage, pastePage, deletePage } from './pages.js';
 
 const require = createRequire(import.meta.url);
 const PORT = Number(process.env.PORT || 3000);
@@ -45,7 +45,7 @@ const cookie = (req, name) =>
 // ---------- pages ----------
 app.get('/', async (req, res) => {
   const totals = await store.stats().catch(() => ({ users: 0, lines: 0 }));
-  res.send(layout({ title: 'Code Wrapped', baseUrl: BASE_URL, body: landingPage({ totals, year: thisYear(), error: req.query.error, detail: req.query.detail }) }));
+  res.send(layout({ title: 'Code Wrapped', baseUrl: BASE_URL, body: landingPage({ totals, year: thisYear(), error: req.query.error, detail: req.query.detail, deleted: req.query.deleted === '1' }) }));
 });
 
 // The two files the "Add a repo" page runs in the browser to read a git log.
@@ -469,6 +469,23 @@ app.post('/api/sources/remove', express.urlencoded({ extended: false }), async (
     await rebuildCard(card.login, thisYear());
   }
   res.redirect(`/u/${encodeURIComponent(card.login)}`);
+});
+
+// Owners can delete their own card. Asks once more before doing it.
+app.get('/delete', async (req, res) => {
+  const card = await ownedCard(req);
+  if (!card) return res.redirect('/?error=owner');
+  res.send(layout({ title: 'Delete your card · Code Wrapped', baseUrl: BASE_URL, body: deletePage(card) }));
+});
+
+app.post('/api/card/delete', async (req, res) => {
+  const card = await ownedCard(req);
+  if (!card) return res.redirect('/?error=owner');
+  await store.deleteCard(card.login);
+  const prefix = `${card.login.toLowerCase()}:`;
+  for (const k of [...pngCache.keys()]) if (k.startsWith(prefix)) pngCache.delete(k);
+  res.setHeader('Set-Cookie', 'cw_edit=; Path=/; Max-Age=0');
+  res.redirect('/?deleted=1');
 });
 
 // Signs a short-lived token that proves requests come from the app itself.
