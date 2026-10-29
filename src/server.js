@@ -270,6 +270,18 @@ async function runJob(job, token, user, installationId) {
     for (const tag of unknownTags) unknownTagCounts.set(tag, (unknownTagCounts.get(tag) || 0) + 1);
     source.includesPrivate = Boolean(installationId);
     source.updatedAt = new Date().toISOString();
+    // A public-only recount can't see private repos, so keep the private
+    // commits from the last private count instead of wiping them.
+    if (!installationId) {
+      const old = (await store.getSources(user.login, year)).find((s) => s.key === 'github');
+      const kept = old?.includesPrivate ? (old.commits || []).filter((c) => c.private) : [];
+      if (kept.length) {
+        const seen = new Set(source.commits.map((c) => c.sha));
+        source.commits.push(...kept.filter((c) => !seen.has(c.sha)));
+        source.totalCommits = Math.max(old.totalCommits || 0, source.totalCommits + kept.length);
+        source.includesPrivate = true;
+      }
+    }
     await store.putSource(user.login, year, source);
     job.progress = { phase: 'card' };
     await rebuildCard(user.login, year, {
