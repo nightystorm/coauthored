@@ -65,7 +65,12 @@ app.get('/u/:login', async (req, res) => {
     return res.status(404).send(layout({ title: 'Code Wrapped', baseUrl: BASE_URL, body: missingPage(req.params.login) }));
   }
   const card = { ...saved, rank: await topPercent(saved).catch(() => null) };
-  const pageUrl = `${BASE_URL}/u/${card.login}${year === thisYear() ? '' : `?year=${year}`}`;
+  // WhatsApp, LinkedIn and X cache a link's preview for days. A version tag
+  // that changes on every recount makes the shared link fetch a fresh one.
+  const params = new URLSearchParams();
+  if (year !== thisYear()) params.set('year', year);
+  params.set('v', Date.parse(card.updatedAt).toString(36));
+  const pageUrl = `${BASE_URL}/u/${card.login}?${params}`;
   // Rank in the image URL so previews refresh when the rank changes.
   const image = `${BASE_URL}/card/${card.login}/${year}.png?v=${Date.parse(card.updatedAt)}-${card.rank || 0}`;
   const split = splitText(card);
