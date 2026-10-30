@@ -88,7 +88,7 @@ app.get('/u/:login', async (req, res) => {
         justCounted: req.query.new === '1',
         removed: req.query.removed === '1',
         added: req.query.added === '1',
-        owner: (await ownedCard(req, year))?.login === card.login,
+        owner: Boolean(await ownedCard(req, year, card.login)),
       }),
     }),
   );
@@ -264,7 +264,7 @@ app.get('/auth/callback', async (req, res) => {
     const job = { status: 'running', login: user.login, progress: { phase: 'search', found: 0 }, startedAt: Date.now(), editKeyHash: hashKey(editKey) };
     jobs.set(id, job);
     runJob(job, token, user, installationId);
-    res.setHeader('Set-Cookie', ['oauth_state=; Path=/; Max-Age=0', editCookie(user.login, editKey)]);
+    res.setHeader('Set-Cookie', ['oauth_state=; Path=/; Max-Age=0', editCookie(req, user.login, editKey)]);
     res.redirect(`/counting/${id}`);
   } catch (e) {
     fail('exception', e.message);
@@ -320,7 +320,10 @@ app.get('/login/gitlab', (req, res) => {
   if (!GL_ID || !GL_SECRET) return res.redirect('/');
   // ".a" = add GitLab to the card this browser already owns.
   const state = crypto.randomBytes(16).toString('hex') + (req.query.add === '1' ? '.a' : '');
-  res.setHeader('Set-Cookie', `gl_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=900${secure}`);
+  const cookies = [`gl_state=${state}; HttpOnly; SameSite=Lax; Path=/; Max-Age=900${secure}`];
+  // Which of this browser's cards GitLab gets added to.
+  if (req.query.add === '1' && req.query.card) cookies.push(`gl_card=${encodeURIComponent(req.query.card)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=900${secure}`);
+  res.setHeader('Set-Cookie', cookies);
   const params = new URLSearchParams({ client_id: GL_ID, redirect_uri: GL_CALLBACK, response_type: 'code', state, scope: 'read_api read_user' });
   res.redirect(`${GITLAB}/oauth/authorize?${params}`);
 });
@@ -346,14 +349,15 @@ app.get('/auth/gitlab/callback', async (req, res) => {
     const user = await getGitLabUser(token);
 
     // Adding to an existing card, or a GitLab-only card of its own.
-    const owned = String(req.query.state || '').endsWith('.a') ? await ownedCard(req) : null;
+    const target = cookie(req, 'gl_card');
+    const owned = String(req.query.state || '').endsWith('.a') ? await ownedCard(req, thisYear(), target ? decodeURIComponent(target) : null) : null;
     const cardId = owned ? owned.login : `gl~${user.username.toLowerCase()}`;
-    const cookies = ['gl_state=; Path=/; Max-Age=0'];
+    const cookies = ['gl_state=; Path=/; Max-Age=0', 'gl_card=; Path=/; Max-Age=0'];
     let editKeyHash = null;
     if (!owned) {
       const editKey = crypto.randomBytes(24).toString('base64url');
       editKeyHash = hashKey(editKey);
-      cookies.push(editCookie(cardId, editKey));
+      cookies.push(editCookie(req, cardId, editKey));
     }
     const id = crypto.randomBytes(12).toString('hex');
     const job = { status: 'running', login: cardId, display: owned ? owned.handle || owned.login : user.username, progress: { phase: 'gitlab', done: 0, total: 0 }, startedAt: Date.now() };
@@ -417,32 +421,48 @@ async function rebuildCard(cardId, year, { profile, addEditKeyHash } = {}) {
 }
 
 const hashKey = (key) => crypto.createHash('sha256').update(key).digest('hex');
-function editCookie(cardId, key) {
-  return `cw_edit=${encodeURIComponent(cardId)}.${key}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000${secure}`;
-}
-// The card this browser may edit, if its edit key matches.
-async function ownedCard(req, year = thisYear()) {
+// One browser can own several cards (say a GitHub card and a GitLab one).
+// cw_edit holds up to 5 "cardId.key" entries joined by "|", newest first.
+const sameId = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+function editEntries(req) {
   const raw = cookie(req, 'cw_edit');
-  if (!raw) return null;
-  const dot = raw.lastIndexOf('.');
-  const cardId = decodeURIComponent(raw.slice(0, dot));
-  const key = raw.slice(dot + 1);
-  const card = await store.get(cardId, year);
-  return card && (card.editKeys || []).includes(hashKey(key)) ? card : null;
+  if (!raw) return [];
+  return raw.split('|').map((e) => {
+    const dot = e.lastIndexOf('.');
+    return dot > 0 ? { id: decodeURIComponent(e.slice(0, dot)), key: e.slice(dot + 1) } : null;
+  }).filter(Boolean);
 }
+function writeEditCookie(entries) {
+  if (!entries.length) return 'cw_edit=; Path=/; Max-Age=0';
+  const value = entries.slice(0, 5).map((e) => `${encodeURIComponent(e.id)}.${e.key}`).join('|');
+  return `cw_edit=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000${secure}`;
+}
+function editCookie(req, cardId, key) {
+  return writeEditCookie([{ id: cardId, key }, ...editEntries(req).filter((e) => !sameId(e.id, cardId))]);
+}
+// The card this browser may edit: the one named, or else the newest it owns.
+async function ownedCard(req, year = thisYear(), cardId = null) {
+  for (const e of editEntries(req)) {
+    if (cardId && !sameId(e.id, cardId)) continue;
+    const card = await store.get(e.id, year);
+    if (card && (card.editKeys || []).includes(hashKey(e.key))) return card;
+  }
+  return null;
+}
+const wantedCard = (req) => String(req.query.card || req.body?.card || '') || null;
 
 // Paste a git log: the page parses it in the browser and sends only the
 // AI commit rows (sha, date, lines, tools) plus a total commit count.
 app.get('/add/paste', async (req, res) => {
-  const card = await ownedCard(req);
+  const card = await ownedCard(req, thisYear(), wantedCard(req));
   if (!card) return res.redirect('/?error=owner');
   res.send(layout({ title: 'Add a repo · Code Wrapped', baseUrl: BASE_URL, body: pastePage({ card, year: thisYear() }) }));
 });
 
 app.post('/api/sources/paste', express.json({ limit: '3mb' }), async (req, res) => {
   try {
-    const card = await ownedCard(req);
-    if (!card) return res.status(403).json({ error: 'This browser can no longer edit this card. Count your GitHub again to get access back.' });
+    const card = await ownedCard(req, thisYear(), wantedCard(req));
+    if (!card) return res.status(403).json({ error: 'This browser can no longer edit this card. Count again on this device to get access back.' });
     const year = thisYear();
     const name = String(req.body?.name || '').trim().slice(0, 60);
     if (!name) return res.status(400).json({ error: 'Give the repo a name.' });
@@ -465,7 +485,7 @@ app.post('/api/sources/paste', express.json({ limit: '3mb' }), async (req, res) 
 });
 
 app.post('/api/sources/remove', express.urlencoded({ extended: false }), async (req, res) => {
-  const card = await ownedCard(req);
+  const card = await ownedCard(req, thisYear(), wantedCard(req));
   if (!card) return res.redirect('/?error=owner');
   const key = String(req.body?.key || '');
   // GitHub is the card's identity, so only extra sources can be removed.
@@ -478,18 +498,19 @@ app.post('/api/sources/remove', express.urlencoded({ extended: false }), async (
 
 // Owners can delete their own card. Asks once more before doing it.
 app.get('/delete', async (req, res) => {
-  const card = await ownedCard(req);
+  const card = await ownedCard(req, thisYear(), wantedCard(req));
   if (!card) return res.redirect('/?error=owner');
   res.send(layout({ title: 'Delete your card · Code Wrapped', baseUrl: BASE_URL, body: deletePage(card) }));
 });
 
-app.post('/api/card/delete', async (req, res) => {
-  const card = await ownedCard(req);
+app.post('/api/card/delete', express.urlencoded({ extended: false }), async (req, res) => {
+  const card = await ownedCard(req, thisYear(), wantedCard(req));
   if (!card) return res.redirect('/?error=owner');
   await store.deleteCard(card.login);
   const prefix = `${card.login.toLowerCase()}:`;
   for (const k of [...pngCache.keys()]) if (k.startsWith(prefix)) pngCache.delete(k);
-  res.setHeader('Set-Cookie', 'cw_edit=; Path=/; Max-Age=0');
+  // Forget only this card's key; keep any other cards this browser owns.
+  res.setHeader('Set-Cookie', writeEditCookie(editEntries(req).filter((e) => !sameId(e.id, card.login))));
   res.redirect('/?deleted=1');
 });
 

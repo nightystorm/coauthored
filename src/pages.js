@@ -253,13 +253,13 @@ function ownerPanel(card) {
   <div class="owner-head"><h2>Add more to your card</h2><span class="fine">Only you see this.</span></div>
   <p class="fine">Count work that isn't on GitHub: company GitLab, Bitbucket, or any repo on your computer. Commits found in two places are counted once.</p>
   <div class="actions">
-    <a class="btn primary" href="/add/paste">+ Add a repo from git log</a>
-    ${GITLAB_ON && !(card.sources || []).some((s) => s.kind === 'gitlab') ? '<a class="btn" href="/login/gitlab?add=1">+ Add GitLab</a>' : ''}
+    <a class="btn primary" href="/add/paste?card=${encodeURIComponent(card.login)}">+ Add a repo from git log</a>
+    ${GITLAB_ON && !(card.sources || []).some((s) => s.kind === 'gitlab') ? `<a class="btn" href="/login/gitlab?add=1&amp;card=${encodeURIComponent(card.login)}">+ Add GitLab</a>` : ''}
     ${(card.sources || [{ kind: 'github' }]).some((s) => s.kind === 'github') ? `<a class="btn" href="${card.includesPrivate ? '/private' : '/login'}">Count GitHub again</a>` : ''}
   </div>
   ${extra.length ? `<ul class="sources">${extra.map((s) => `<li><span><b>${esc(s.label)}</b> <span class="fine">${s.kind === 'paste' ? 'pasted' : s.kind === 'gitlab' ? 'gitlab.com' : esc(s.kind)}, ${fmt(s.commits)} AI ${s.commits === 1 ? 'commit' : 'commits'}</span></span>
-    <form method="post" action="/api/sources/remove"><input type="hidden" name="key" value="${esc(s.key)}"><button class="link" type="submit">Remove</button></form></li>`).join('')}</ul>` : ''}
-  <p class="fine"><a href="/delete">Delete my card</a></p>
+    <form method="post" action="/api/sources/remove"><input type="hidden" name="card" value="${esc(card.login)}"><input type="hidden" name="key" value="${esc(s.key)}"><button class="link" type="submit">Remove</button></form></li>`).join('')}</ul>` : ''}
+  <p class="fine"><a href="/delete?card=${encodeURIComponent(card.login)}">Delete my card</a></p>
 </section>`;
 }
 
@@ -271,6 +271,7 @@ export function deletePage(card) {
   <p class="fine">You can make a new card any time by counting again.</p>
 </section>
 <form method="post" action="/api/card/delete" class="actions">
+  <input type="hidden" name="card" value="${esc(card.login)}">
   <button class="btn primary" type="submit">Yes, delete my card</button>
   <a class="btn" href="/u/${esc(card.login)}">Cancel</a>
 </form>`;
@@ -296,7 +297,7 @@ export function sharePage({ card, pageUrl, image, justCounted, removed, added, o
     ? `We looked for commits in ${card.year} that you authored with an AI tool in a <code>Co-authored-by</code> line.${card.includesPrivate ? '' : ' Only public repos were counted.'}`
     : `${fmt(card.commits)} commits across ${fmt(card.repos)} ${card.repos === 1 ? 'repo' : 'repos'} in ${card.year}, ${fmt(card.deletions)} lines deleted along the way. Counted from ${esc(sourcesText(card))}.`}</p>
 </section>
-${owner ? ownerPanel(card) : ''}
+${owner ? ownerPanel(card) : `<p class="fine">Your card? To add more repos or delete it, <a href="${card.login.startsWith('gl~') ? '/login/gitlab' : '/private'}">count again on this device</a>. Your browser then remembers it's yours.</p>`}
 <figure>
   <img class="card-img" src="${esc(image)}" alt="Card: +${fmt(card.additions)} lines of code shipped with ${esc(headlineTool(card))} in ${card.year} by @${esc(card.handle || card.login)}" width="1200" height="630">
 </figure>
@@ -455,7 +456,7 @@ $('add').addEventListener('click', async () => {
   try {
     const r = await fetch('/api/sources/paste', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: $('reponame').value.trim(), totalCommits: parsed.totalCommits, commits: parsed.commits }),
+      body: JSON.stringify({ card: ${JSON.stringify(card.login).replace(/</g, '\\u003c')}, name: $('reponame').value.trim(), totalCommits: parsed.totalCommits, commits: parsed.commits }),
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || 'Something went wrong.');
