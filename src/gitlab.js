@@ -1,12 +1,13 @@
-// gitlab.com source: walks the user's projects and reads this year's commits
-// (with line stats), keeping the ones they authored. GitLab has no search
-// across projects, so we go project by project.
+// gitlab.com source: finds the projects the user actually pushed to this
+// year, reads this year's commits (with line stats) in each, and keeps the
+// ones they authored. GitLab has no search across projects, so we go project
+// by project.
 import { toolsInMessage, unknownAiTags } from './tools.js';
 import { fingerprint } from './counter.js';
 
 export const GITLAB = 'https://gitlab.com';
-const MAX_PROJECTS = 200;
-const MAX_PAGES_PER_PROJECT = 30; // 3,000 commits per project
+const MAX_PROJECTS = 300;
+const MAX_PAGES_PER_PROJECT = 100; // 10,000 commits per project per year
 
 async function gl(token, path) {
   const res = await fetch(`${GITLAB}/api/v4${path}`, { headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'codewrapped-app' } });
@@ -16,6 +17,18 @@ async function gl(token, path) {
     throw new Error(`GitLab said ${res.status}: ${String(message).slice(0, 200)}`);
   }
   return { body: await res.json(), next: res.headers.get('x-next-page') };
+}
+
+// Every page of a list endpoint, up to `max` items.
+async function all(token, path, max) {
+  const out = [];
+  const sep = path.includes('?') ? '&' : '?';
+  for (let page = 1; page && out.length < max; ) {
+    const r = await gl(token, `${path}${sep}per_page=100&page=${page}`);
+    out.push(...r.body);
+    page = r.next ? Number(r.next) : 0;
+  }
+  return out;
 }
 
 export async function getGitLabUser(token) {
@@ -31,22 +44,51 @@ async function userEmails(token, user) {
   return emails;
 }
 
+// Commits often carry a work email that isn't on the GitLab account. In
+// projects the user pushed to, the same full name (two words or more) is
+// them. A single-word name is too common to trust.
+const norm = (s) => String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+function nameMatcher(user) {
+  const name = norm(user.name);
+  return name.includes(' ') ? (n) => norm(n) === name : () => false;
+}
+
+// Projects the user pushed to this year: their push events plus GitLab's own
+// "contributed to" list. Membership alone can be hundreds of company repos
+// they never touched. Falls back to membership if both come back empty.
+async function findProjects(token, user, year) {
+  const ids = new Set();
+  try {
+    const events = await all(token, `/events?action=pushed&after=${year - 1}-12-31`, 5000);
+    for (const e of events) if (e.project_id) ids.add(e.project_id);
+  } catch {}
+  const byId = new Map();
+  try {
+    for (const p of await all(token, `/users/${user.id}/contributed_projects?simple=true`, 1000)) byId.set(p.id, p);
+  } catch {}
+  for (const id of ids) {
+    if (byId.has(id) || byId.size >= MAX_PROJECTS) continue;
+    try { byId.set(id, (await gl(token, `/projects/${id}?simple=true`)).body); } catch {}
+  }
+  if (!byId.size) {
+    for (const p of await all(token, `/projects?membership=true&simple=true&last_activity_after=${year}-01-01T00:00:00Z`, MAX_PROJECTS)) byId.set(p.id, p);
+  }
+  return [...byId.values()].slice(0, MAX_PROJECTS);
+}
+
 export async function countGitLab({ token, user, year, onProgress }) {
   const emails = await userEmails(token, user);
+  const sameName = nameMatcher(user);
   const since = `${year}-01-01T00:00:00Z`;
   const until = `${year}-12-31T23:59:59Z`;
 
-  const projects = [];
-  for (let page = 1; page && projects.length < MAX_PROJECTS; ) {
-    const r = await gl(token, `/projects?membership=true&simple=true&per_page=100&page=${page}&last_activity_after=${since}`);
-    projects.push(...r.body);
-    page = r.next ? Number(r.next) : 0;
-  }
+  onProgress?.({ phase: 'gitlab', done: 0, total: 0, found: 0 });
+  const projects = await findProjects(token, user, year);
 
   const commits = [];
   const unknown = new Set();
   let totalCommits = 0;
-  for (const [i, p] of projects.slice(0, MAX_PROJECTS).entries()) {
+  for (const [i, p] of projects.entries()) {
     onProgress?.({ phase: 'gitlab', done: i, total: projects.length, found: commits.length });
     const pub = p.visibility === 'public';
     for (let page = 1, n = 0; page && n < MAX_PAGES_PER_PROJECT; n++) {
@@ -58,7 +100,7 @@ export async function countGitLab({ token, user, year, onProgress }) {
       }
       for (const c of r.body) {
         if ((c.parent_ids || []).length > 1) continue; // merge commit
-        if (!emails.has(String(c.author_email || '').toLowerCase())) continue;
+        if (!emails.has(String(c.author_email || '').toLowerCase()) && !sameName(c.author_name)) continue;
         totalCommits += 1;
         const tools = toolsInMessage(c.message || '');
         for (const t of unknownAiTags(c.message || '')) unknown.add(t);
