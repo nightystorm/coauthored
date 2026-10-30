@@ -263,7 +263,12 @@ app.get('/auth/callback', async (req, res) => {
     const editKey = crypto.randomBytes(24).toString('base64url');
     const job = { status: 'running', login: user.login, progress: { phase: 'search', found: 0 }, startedAt: Date.now(), editKeyHash: hashKey(editKey) };
     jobs.set(id, job);
-    runJob(job, token, user, installationId);
+    // GitLab-only cards this browser owns get folded into the GitHub card.
+    const glCards = [];
+    for (const e of editEntries(req)) {
+      if (e.id.startsWith('gl~') && (await ownedCard(req, thisYear(), e.id))) glCards.push(e.id);
+    }
+    runJob(job, token, user, installationId, glCards);
     res.setHeader('Set-Cookie', ['oauth_state=; Path=/; Max-Age=0', editCookie(req, user.login, editKey)]);
     res.redirect(`/counting/${id}`);
   } catch (e) {
@@ -271,7 +276,26 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-async function runJob(job, token, user, installationId) {
+// Moves every non-GitHub source (GitLab, pasted repos) from the `from` cards
+// onto `to`, keeping the newer copy when both have one, then deletes them.
+async function mergeCards(fromIds, to, year) {
+  const have = new Map((await store.getSources(to, year)).map((s) => [s.key, s]));
+  for (const from of fromIds) {
+    if (sameId(from, to)) continue;
+    for (const s of await store.getSources(from, year)) {
+      if (s.kind === 'github') continue;
+      const cur = have.get(s.key);
+      if (cur && Date.parse(cur.updatedAt || 0) >= Date.parse(s.updatedAt || 0)) continue;
+      await store.putSource(to, year, s);
+      have.set(s.key, s);
+    }
+    await store.deleteCard(from);
+    const prefix = `${from.toLowerCase()}:`;
+    for (const k of [...pngCache.keys()]) if (k.startsWith(prefix)) pngCache.delete(k);
+  }
+}
+
+async function runJob(job, token, user, installationId, glCards = []) {
   try {
     const year = thisYear();
     const { source, unknownTags } = await countGitHub({ token, login: user.login, year, onProgress: (p) => (job.progress = p) });
@@ -291,6 +315,7 @@ async function runJob(job, token, user, installationId) {
       }
     }
     await store.putSource(user.login, year, source);
+    if (glCards.length) await mergeCards(glCards, user.login, year);
     job.progress = { phase: 'card' };
     await rebuildCard(user.login, year, {
       profile: { name: user.name, avatarUrl: user.avatar_url },
@@ -349,8 +374,12 @@ app.get('/auth/gitlab/callback', async (req, res) => {
     const user = await getGitLabUser(token);
 
     // Adding to an existing card, or a GitLab-only card of its own.
+    // One card per person: GitLab goes onto the card this browser already
+    // owns (the one picked in its panel, or else the newest). A GitLab-only
+    // card of a different GitLab account is left alone.
     const target = cookie(req, 'gl_card');
-    const owned = String(req.query.state || '').endsWith('.a') ? await ownedCard(req, thisYear(), target ? decodeURIComponent(target) : null) : null;
+    let owned = await ownedCard(req, thisYear(), String(req.query.state || '').endsWith('.a') && target ? decodeURIComponent(target) : null);
+    if (owned?.login.startsWith('gl~') && !sameId(owned.login, `gl~${user.username}`)) owned = null;
     const cardId = owned ? owned.login : `gl~${user.username.toLowerCase()}`;
     const cookies = ['gl_state=; Path=/; Max-Age=0', 'gl_card=; Path=/; Max-Age=0'];
     let editKeyHash = null;

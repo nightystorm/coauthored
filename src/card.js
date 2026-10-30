@@ -36,8 +36,11 @@ const MONTHS = 'JFMAMJJASOND'.split('');
 async function avatarData(url) {
   try {
     const res = await fetch(`${url}${url.includes('?') ? '&' : '?'}s=160`);
+    // A broken link can answer with a web page; draw the card without a picture then.
+    const type = res.headers.get('content-type') || '';
+    if (!res.ok || !/^image\/(png|jpe?g|gif|webp)/.test(type)) return null;
     const buf = Buffer.from(await res.arrayBuffer());
-    return `data:${res.headers.get('content-type') || 'image/png'};base64,${buf.toString('base64')}`;
+    return `data:${type.split(';')[0]};base64,${buf.toString('base64')}`;
   } catch {
     return null;
   }
